@@ -122,7 +122,7 @@ export const PLANS: PlanInfo[] = [
   {
     id: "pro",
     title: "حرفه‌ای (Pro)",
-    price: "۴٬۹۰۰٬۰۰۰ تومان",
+    price: "۵٬۰۰۰٬۰۰۰ ریال",
     period: "پرداخت یک‌بار — مادام‌العمر، یک ایستگاه کاری",
     features: [
       { ok: true, text: "همه امکانات نسخه رایگان" },
