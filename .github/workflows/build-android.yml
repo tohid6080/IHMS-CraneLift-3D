@@ -122,24 +122,27 @@ jobs:
             echo "HAS_RELEASE=false" >> "$GITHUB_ENV"
             exit 0
           fi
-          # حذفِ هر \r/\n یا فاصله‌ی ابتدا/انتهاییِ احتمالی که هنگامِ
-          # کپی‌پیستِ مقدارِ Secret در رابطِ گیت‌هاب اضافه شده باشد — یک
-          # newlineِ اضافه داخلِ رشته‌ی تک‌کوتیشنِ Groovy باعثِ خطای
-          # «Unexpected character» در build.gradle می‌شود.
-          KEYSTORE_B64="$(printf '%s' "$KEYSTORE_B64" | tr -d '\n\r ')"
-          KEY_ALIAS="$(printf '%s' "$KEY_ALIAS" | tr -d '\n\r' | xargs)"
-          KEY_PASSWORD="$(printf '%s' "$KEY_PASSWORD" | tr -d '\n\r' | xargs)"
-          echo "$KEYSTORE_B64" | base64 -d > android/app/release.keystore
-          cat >> android/app/build.gradle << GRADLE_EOF
+          # مقادیرِ Secret هرگز مستقیماً داخلِ سورسِ Groovy اینترپولیت
+          # نمی‌شوند (اگر مقدار شاملِ یک تک‌کوتیشن یا newline باشد، چه با
+          # اینترپولیشنِ bash و چه با ابزاری مثلِ xargs، سینتکسِ
+          # build.gradle یا خودِ پردازشِ bash می‌شکند — هر دو این مشکلات در
+          # تلاش‌های قبلی رخ داد). به‌جایش، هر مقدار بدونِ هیچ پردازشی در
+          # یک فایلِ متنیِ ساده نوشته می‌شود و خودِ Gradle (نه bash) آن را
+          # در زمانِ build می‌خواند — این‌طور هیچ کاراکتری در مقدارِ Secret
+          # اهمیتی ندارد.
+          printf '%s' "$KEYSTORE_B64" | tr -d '\n\r ' | base64 -d > android/app/release.keystore
+          printf '%s' "$KEY_ALIAS" > android/app/release_alias.txt
+          printf '%s' "$KEY_PASSWORD" > android/app/release_password.txt
+          cat >> android/app/build.gradle << 'GRADLE_EOF'
 
           // --- تزریق‌شده توسط build-android.yml: امضایِ release ---
           android {
               signingConfigs {
                   release {
                       storeFile file('release.keystore')
-                      storePassword '$KEY_PASSWORD'
-                      keyAlias '$KEY_ALIAS'
-                      keyPassword '$KEY_PASSWORD'
+                      storePassword new File("${project.projectDir}/release_password.txt").text.trim()
+                      keyAlias new File("${project.projectDir}/release_alias.txt").text.trim()
+                      keyPassword new File("${project.projectDir}/release_password.txt").text.trim()
                   }
               }
               buildTypes {
