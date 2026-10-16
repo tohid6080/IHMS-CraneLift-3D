@@ -35,8 +35,13 @@ import ir.cafebazaar.poolakey.request.PurchaseRequest
 @CapacitorPlugin(name = "BazaarBilling")
 class BazaarBillingPlugin : Plugin() {
 
-    // TODO: پیش از انتشار، این دو مقدار را از پنلِ کافه‌بازار پر کنید.
-    private val rsaPublicKey: String = "BAZAAR_RSA_PUBLIC_KEY_PLACEHOLDER"
+    // TODO: productIdPro را با شناسه‌ی واقعیِ محصولی که در پیشخوانِ بازار
+    // می‌سازید جایگزین کنید (فعلاً placeholder است).
+    private val rsaPublicKey: String =
+        "MIHNMA0GCSqGSIb3DQEBAQUAA4G7ADCBtwKBrwDR5IXje+nLjoF/kbtJJ0aSeJcTPibdetAHM+v4" +
+            "MIAlovTMLBf1gX8bGclAoFOXLMQNSMWZAKvCmDSgH7ZAI2rCXWdPf5oQFj+oQBJshtF1z6GInbfS" +
+            "dQgMGgKb7Cz/6X5coEpLK3hEsloVc7mN14/9CQqUmCZmvYGTFrXvnulUHWDK8O+UyxSQhjmFFXcp" +
+            "RmD3Sw40YK8x1V0vTQaVlRUVy88wNAoHkra6kk8xQTsCAwEAAQ=="
     private val productIdPro: String = "cranelift_pro_lifetime"
 
     private val paymentConfig by lazy {
