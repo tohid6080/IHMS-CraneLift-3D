@@ -1,11 +1,13 @@
 "use client";
 
 /**
- * CraneLift Pro 3D — پوسته اصلی اپلیکیشن
+ * CraneLift Pro 3D — پوسته اصلی اپلیکیشن (استایل LMI)
  * -----------------------------------------------------------
- * هدر (لوگو + تم + ریست)، نوار مراحل (Stepper)، محتوای مرحله جاری
- * + پنل سه‌بعدی sticky، مونتاژ مخفی منحنی لودچارت (برای اسکرین‌شات
- * گزارش) و فوتر چسبان با ناوبری مراحل.
+ * نوار ابزار بالایی به سبک نمایشگرهای صنعتی LMI: کاشی‌های مربعی
+ * مراحل (کاشی فعال با حاشیه کهربایی درخشان) + لوگوی فشرده در ابتدا
+ * و کاشی تم/ریست در انتها؛ محتوای مرحله جاری + پنل سه‌بعدی sticky،
+ * مونتاژ مخفی منحنی لودچارت (برای اسکرین‌شات گزارش)، نوار وضعیت LMI
+ * بالای فوتر و فوتر چسبان با ناوبری مراحل.
  */
 
 import { ThemeProvider, useTheme } from "next-themes";
@@ -20,6 +22,7 @@ import {
   Sun,
   Moon,
   RotateCcw,
+  CheckCircle2,
   ChevronRight,
   ChevronLeft,
   Loader2,
@@ -37,6 +40,7 @@ import Step5Analysis from "./steps/Step5Analysis";
 import Step6Report from "./steps/Step6Report";
 import ScenePanel from "./ScenePanel";
 import LoadChartCurve from "./LoadChartCurve";
+import LmiStatusBar from "./LmiStatusBar";
 
 const STEPS = [
   { title: "انتخاب جرثقیل", icon: Truck },
@@ -47,19 +51,24 @@ const STEPS = [
   { title: "گزارش PDF", icon: FileDown },
 ] as const;
 
-/** دکمه تغییر تم — بدون state اضافه: آیکون با کلاس dark کنترل می‌شود */
+/** ابعاد کاشی LMI: ~۵۲px موبایل → ۶۴/۷۲px دسکتاپ */
+const TILE_SIZE = "size-13 sm:size-16 md:size-18";
+
+/** کاشی تم — بدون state اضافه: آیکون با کلاس dark کنترل می‌شود */
 function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme();
   return (
-    <Button
-      variant="ghost"
-      size="icon"
+    <button
+      type="button"
       aria-label="تغییر تم روشن/تاریک"
+      title="تغییر تم روشن/تاریک"
       onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+      className={`${TILE_SIZE} flex shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border-2 border-border text-muted-foreground transition-colors hover:border-amber-500/50 hover:text-amber-500`}
     >
-      <Sun className="hidden size-5 text-amber-500 dark:block" />
-      <Moon className="size-5 dark:hidden" />
-    </Button>
+      <Sun className="hidden size-6 text-amber-500 dark:block" />
+      <Moon className="size-6 dark:hidden" />
+      <span className="text-[10px] font-medium leading-none">تم</span>
+    </button>
   );
 }
 
@@ -86,13 +95,13 @@ function CraneLiftAppInner() {
   const next = useLiftStore((s) => s.next);
   const prev = useLiftStore((s) => s.prev);
   const selectedCraneId = useLiftStore((s) => s.selectedCraneId);
+  const customCranes = useLiftStore((s) => s.customCranes);
   const customCharts = useLiftStore((s) => s.customCharts);
   const inputs = useLiftStore((s) => s.inputs);
   const result = useLiftStore((s) => s.result);
-  const meta = useLiftStore((s) => s.meta);
   const resetAll = useLiftStore((s) => s.resetAll);
 
-  const crane = getCraneById(selectedCraneId);
+  const crane = getCraneById(selectedCraneId, customCranes);
   const chart = crane ? getChartFor(crane.id, customCharts) : null;
   const grossT = inputs.loadWeightT + inputs.hookBlockWeightT + inputs.riggingWeightT;
 
@@ -134,83 +143,89 @@ function CraneLiftAppInner() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      {/* ═══ هدر ═══ */}
-      <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-[1400px] items-center justify-between gap-3 px-4">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.35)]">
-              <HardHat className="size-6 text-black" />
+      {/* ═══ نوار ابزار LMI: لوگو + کاشی مراحل + تم/ریست ═══ */}
+      <header className="sticky top-0 z-40 border-b border-slate-300/70 bg-slate-200/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.55),inset_0_-2px_6px_rgba(15,23,42,0.10)] backdrop-blur dark:border-slate-700/70 dark:bg-slate-900/90 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06),inset_0_-2px_6px_rgba(0,0,0,0.45)]">
+        <div className="mx-auto flex w-full max-w-[1400px] items-center gap-1.5 px-2 sm:gap-2.5 sm:px-4">
+          {/* لوگوی فشرده — ابتدای نوار */}
+          <div className="flex shrink-0 items-center gap-2 py-1.5">
+            <div className="flex size-9 items-center justify-center rounded-lg bg-amber-500 shadow-[0_0_16px_rgba(245,158,11,0.4)] sm:size-10">
+              <HardHat className="size-5 text-black sm:size-6" />
             </div>
-            <div>
-              <h1 className="text-base font-black leading-tight sm:text-lg" dir="ltr">
+            <div className="hidden sm:block">
+              <h1 className="text-sm font-black leading-tight" dir="ltr">
                 CraneLift <span className="text-amber-500">Pro 3D</span>
               </h1>
-              <p className="text-[11px] text-muted-foreground">
+              <p className="text-[10px] leading-tight text-muted-foreground">
                 برنامه‌ریزی و تحلیل لیفت جرثقیل
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-1.5">
-            {crane && (
-              <span
-                className="hidden rounded-md border bg-muted/50 px-2.5 py-1 text-xs md:inline-block"
-                dir="ltr"
-              >
-                {crane.name}
-              </span>
-            )}
-            <span
-              className="hidden rounded-md border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground lg:inline-block"
-              dir="ltr"
-            >
-              {meta.projectId}
-            </span>
+
+          <div aria-hidden className="hidden h-10 w-px shrink-0 bg-slate-400/30 md:block" />
+
+          {/* کاشی‌های مراحل — اسکرول افقی در صفحه باریک */}
+          <nav
+            aria-label="مراحل برنامه‌ریزی لیفت"
+            className="scroll-slim min-w-0 flex-1 overflow-x-auto py-1.5"
+          >
+            <ol className="flex w-max items-center gap-1.5 sm:gap-2">
+              {STEPS.map((s, i) => {
+                const Icon = s.icon;
+                const active = i === step;
+                const done = i < step;
+                return (
+                  <li key={s.title} className="shrink-0">
+                    <button
+                      type="button"
+                      disabled={!canGo(i)}
+                      onClick={() => canGo(i) && setStep(i)}
+                      aria-current={active ? "step" : undefined}
+                      title={
+                        canGo(i) ? s.title : `${s.title} — ابتدا جرثقیل انتخاب کنید`
+                      }
+                      className={`${TILE_SIZE} relative flex flex-col items-center justify-center gap-0.5 rounded-lg border-2 bg-card/70 transition-colors ${
+                        active
+                          ? "border-amber-500 bg-amber-500/15 text-amber-600 shadow-[0_0_14px_rgba(245,158,11,0.45)] dark:text-amber-400"
+                          : done
+                            ? "border-green-500/40 bg-green-500/5 text-green-600 dark:text-green-400"
+                            : "text-muted-foreground hover:border-amber-500/40 hover:text-foreground"
+                      } ${canGo(i) ? "" : "cursor-not-allowed opacity-40"}`}
+                    >
+                      <Icon className="size-6" />
+                      <span className="line-clamp-2 px-0.5 text-center text-[10px] font-medium leading-[1.2]">
+                        {s.title}
+                      </span>
+                      {done && (
+                        <span
+                          aria-hidden
+                          className="absolute -end-1 -top-1 rounded-full bg-background"
+                        >
+                          <CheckCircle2 className="size-4 text-green-500" />
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          </nav>
+
+          {/* تم و ریست — انتهای نوار (هم‌ارتفاع کاشی‌ها) */}
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             <ThemeToggle />
-            <Button
-              variant="ghost"
-              size="icon"
+            <button
+              type="button"
               aria-label="شروع پروژه جدید"
+              title="شروع پروژه جدید"
               onClick={handleReset}
+              className={`${TILE_SIZE} flex flex-col items-center justify-center gap-0.5 rounded-lg border-2 border-border text-muted-foreground transition-colors hover:border-red-500/50 hover:text-red-500`}
             >
-              <RotateCcw className="size-5" />
-            </Button>
+              <RotateCcw className="size-6" />
+              <span className="text-[10px] font-medium leading-none">ریست</span>
+            </button>
           </div>
         </div>
       </header>
-
-      {/* ═══ نوار مراحل ═══ */}
-      <nav aria-label="مراحل برنامه‌ریزی لیفت" className="mx-auto w-full max-w-[1400px] px-4 pt-4">
-        <ol className="scroll-slim flex gap-1.5 overflow-x-auto pb-1">
-          {STEPS.map((s, i) => {
-            const Icon = s.icon;
-            const active = i === step;
-            const done = i < step;
-            return (
-              <li key={s.title} className="shrink-0">
-                <button
-                  type="button"
-                  disabled={!canGo(i)}
-                  onClick={() => canGo(i) && setStep(i)}
-                  aria-current={active ? "step" : undefined}
-                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors disabled:opacity-50 ${
-                    active
-                      ? "border-amber-500 bg-amber-500 font-bold text-black"
-                      : done
-                        ? "border-green-500/30 bg-green-500/10 text-green-500"
-                        : "border-border text-muted-foreground hover:border-amber-500/40 hover:text-foreground"
-                  }`}
-                >
-                  <span className="flex size-5 items-center justify-center rounded-full bg-black/10 text-[11px] font-bold dark:bg-white/10">
-                    {i + 1}
-                  </span>
-                  <Icon className="size-4" />
-                  <span className="hidden sm:inline">{s.title}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ol>
-      </nav>
 
       {/* ═══ محتوای اصلی ═══ */}
       <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6">
@@ -253,6 +268,9 @@ function CraneLiftAppInner() {
           />
         </div>
       )}
+
+      {/* ═══ نوار وضعیت LMI (بالا و خارج از فوتر — جریان صفحه) ═══ */}
+      <LmiStatusBar />
 
       {/* ═══ فوتر چسبان ═══ */}
       <footer className="mt-auto border-t bg-card">

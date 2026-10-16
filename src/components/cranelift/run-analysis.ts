@@ -15,7 +15,7 @@ import type { AnalysisResult } from "@/lib/cranelift/types";
 /** اجرای تحلیل کامل + ثبت تصاویر. اگر جرثقیلی انتخاب نشده باشد null برمی‌گرداند. */
 export async function runAnalysis(): Promise<AnalysisResult | null> {
   const s = useLiftStore.getState();
-  const crane = getCraneById(s.selectedCraneId);
+  const crane = getCraneById(s.selectedCraneId, s.customCranes);
   if (!crane) return null;
 
   const chart = getChartFor(crane.id, s.customCharts);

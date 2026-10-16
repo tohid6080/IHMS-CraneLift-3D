@@ -59,12 +59,49 @@ export interface LoadChartSection {
   points: LoadChartPoint[];
 }
 
+/**
+ * یک ردیف جدول جیب: ظرفیت‌ها بر اساس زاویه بوم (مثل کاتالوگ)
+ * مقادیر null = خارج از محدوده مجاز
+ */
+export interface JibChartRow {
+  boomAngleDeg: number; // زاویه بوم (ردیف جدول)
+  capacities: (number | null)[]; // به تعداد ستون‌ها (جیب × زاویه)
+}
+
+/**
+ * جدول ظرفیت جیب — مطابق کاتالوگ (TJ):
+ * ردیف‌ها = زاویه بوم | ستون‌ها = (طول جیب × زاویه انحراف جیب)
+ * capacities مقدارها بر حسب «تن»
+ */
+export interface JibChartTable {
+  jibLengthsM: number[]; // طول‌های جیب (مثلاً [9.2, 16])
+  offsetAnglesDeg: number[]; // زاویه انحراف جیب نسبت به بوم (مثلاً [0, 15, 30])
+  rows: JibChartRow[]; // مرتب نزولی بر اساس زاویه بوم (مثل کاتالوگ: 78→56)
+}
+
+/**
+ * یک «صفحه» لودچارت — مطابق کاتالوگ واقعی سازنده:
+ * هر صفحه = یک کانفیگ کانترویت/ضریب قرقره با جدول اصلی (بوم) + جدول جیب + یادداشت‌ها
+ */
+export interface LoadChartPage {
+  id: string; // شناسه یکتا در داخل چارت
+  label: string; // عنوان صفحه (مثلاً «کانترویت ۸.۵ تن — ۱۰۰٪»)
+  counterweightT?: number; // کانترویت این کانفیگ (تن)
+  partsOfLinePct?: number; // درصد قرقره (۱۰۰ یا ۵۰)
+  sections: LoadChartSection[]; // جدول اصلی: ظرفیت بر اساس (طول بوم، شعاع)
+  jibTable?: JibChartTable; // جدول جیب (اختیاری)
+  notes: string[]; // یادداشت‌های پای جدول (مثل کاتالوگ)
+}
+
 /** لودچارت کامل یک جرثقیل */
 export interface LoadChart {
   craneId: string;
-  sections: LoadChartSection[];
+  sections: LoadChartSection[]; // سکشن‌های «صفحه فعال» (برای سازگاری با موتور تحلیل)
   source: "default" | "custom"; // مرجع یا سفارشی (ویرایش/آپلود کاربر)
   updatedAt: string; // ISO date
+  pages?: LoadChartPage[]; // صفحات کاتالوگ (کانفیگ‌های کانترویت)
+  activePageId?: string; // صفحه فعال
+  capacityUnit?: "t"; // واحدهای جدول (همیشه تن — برای نمایش)
 }
 
 /** ابعاد بار */
@@ -190,6 +227,14 @@ export interface ProjectMeta {
   engineerName: string; // نام مهندس ناظر (برای گزارش)
   companyName: string;
   date: string; // ISO
+}
+
+/** ظرفیت جیب حل‌شده از جدول جیب (برای نمایش در تحلیل) */
+export interface JibLookupInfo {
+  capacityT: number | null;
+  boomAngleUsedDeg: number | null;
+  offsetUsedDeg: number | null;
+  interpolated: boolean;
 }
 
 /** نتیجه حل هندسه شعاع ↔ زاویه بوم */

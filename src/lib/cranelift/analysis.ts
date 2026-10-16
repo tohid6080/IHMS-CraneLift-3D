@@ -14,6 +14,7 @@ import type {
   LiftInputs,
   LoadChart,
 } from "./types";
+import { getActivePage, lookupJibCapacity } from "./load-charts";
 
 // ───────────────────────── ابزار ریاضی ─────────────────────────
 const D2R = Math.PI / 180;
@@ -229,13 +230,38 @@ export function analyzeLift(
     : { capacityT: null, clampedLow: false, boomClamped: false };
 
   let rated = lookup.capacityT;
-  if (rated !== null && inputs.useJib && !isTower) {
-    rated = rated * s.jibCapacityFactor;
-    warnings.push({
-      level: "info",
-      code: "JIB_FACTOR",
-      message: `ظرفیت با احتساب ضریب جیب (${s.jibCapacityFactor}) کاهش یافت. لودچارت جیب رسمی سازنده را بررسی کنید.`,
-    });
+  if (inputs.useJib && !isTower) {
+    // اولویت با جدول جیب کاتالوگ (TJ) است — زاویه‌محور مثل کاتالوگ واقعی
+    const jibTable = chart ? getActivePage(chart).jibTable : undefined;
+    if (jibTable) {
+      const boomAngle = geo.ok ? geo.boomAngleDeg : inputs.boomAngleDeg;
+      const offsetDeg = Math.min(Math.max(boomAngle - inputs.jibAngleDeg, 0), 60);
+      const jibCap = lookupJibCapacity(
+        jibTable,
+        inputs.jibLengthM,
+        offsetDeg,
+        boomAngle
+      );
+      rated = jibCap.capacityT;
+      if (rated !== null) {
+        warnings.push({
+          level: "info",
+          code: "JIB_TABLE",
+          message: `ظرفیت از جدول جیب کاتالوگ خوانده شد (بوم ${boomAngle.toFixed(
+            0
+          )}° — انحراف جیب ${offsetDeg.toFixed(0)}°${
+            jibCap.interpolated ? "، درون‌یابی‌شده" : ""
+          }).`,
+        });
+      }
+    } else if (rated !== null) {
+      rated = rated * s.jibCapacityFactor;
+      warnings.push({
+        level: "info",
+        code: "JIB_FACTOR",
+        message: `ظرفیت با احتساب ضریب جیب (${s.jibCapacityFactor}) کاهش یافت. لودچارت جیب رسمی سازنده را بررسی کنید.`,
+      });
+    }
   }
 
   const effective = rated !== null ? rated / Math.max(inputs.safetyFactor, 1) : null;

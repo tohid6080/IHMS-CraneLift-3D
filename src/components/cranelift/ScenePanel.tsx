@@ -38,7 +38,8 @@ export default function ScenePanel() {
   const result = useLiftStore((s) => s.result);
   const setStep = useLiftStore((s) => s.setStep);
 
-  const crane = getCraneById(selectedId);
+  const customCranes = useLiftStore((s) => s.customCranes);
+  const crane = getCraneById(selectedId, customCranes);
   const geo = crane ? solveGeometry(crane, inputs) : null;
   const grossT = inputs.loadWeightT + inputs.hookBlockWeightT + inputs.riggingWeightT;
 

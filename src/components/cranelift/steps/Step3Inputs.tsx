@@ -181,7 +181,8 @@ export default function Step3Inputs() {
   const setStep = useLiftStore((s) => s.setStep);
   const { toast } = useToast();
 
-  const crane = getCraneById(selectedCraneId);
+  const customCranes = useLiftStore((s) => s.customCranes);
+  const crane = getCraneById(selectedCraneId, customCranes);
 
   // ── هندسه زنده بوم ──
   const geo = useMemo<GeometrySolution | null>(

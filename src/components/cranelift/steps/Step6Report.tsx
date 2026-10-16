@@ -50,7 +50,8 @@ export default function Step6Report() {
   const chartImage = useLiftStore((s) => s.chartImage);
   const resetAll = useLiftStore((s) => s.resetAll);
 
-  const crane = getCraneById(selectedId);
+  const customCranes = useLiftStore((s) => s.customCranes);
+  const crane = getCraneById(selectedId, customCranes);
 
   if (!crane) {
     return (

@@ -158,3 +158,102 @@ Work Log:
 
 Stage Summary:
 - App is production-ready and fully browser-verified
+
+---
+Task ID: 7-a
+Agent: main coordinator
+Task: Data layer — catalog-style load chart pages + jib tables + custom cranes + SANY STC500E
+
+Work Log:
+- types.ts: added JibChartRow, JibChartTable (rows=boom angle, cols=jib len × offset), LoadChartPage (label/counterweightT/partsOfLinePct/sections/jibTable/notes), extended LoadChart with pages?/activePageId, added JibLookupInfo
+- NEW stc500e-chart.ts: real SANY STC500E catalog data transcribed from attached PDF — page 1 «کانترویت ۸.۵ تن ۱۰۰٪» = 15 boom-length sections (11.7…45.0 + 18.0/24.2/30.5/36.7 + 22.1/28.4/34.6/40.9) with radius 3.0→38.0 capacities in tonnes + jib table (9.2/16m × 0/15/30°, boom 78→56°) + 8 catalog notes; page 2 «کانترویت ۶.۰ تن ۱۰۰٪» = 13 sections
+- load-charts.ts: normalizeChart (legacy→single page), getActivePage, setActivePage, updateActivePageSections (keeps sections+pages in sync), updateActivePageJibTable, updateActivePageNotes, addChartPage, removeChartPage, lookupJibCapacity (linear interp by boom angle rows + offset columns); getChartFor now normalizes; DEFAULT_LOAD_CHARTS["stc500e"] registered with 2 pages
+- cranes.ts: added SANY STC500E (id stc500e, 50t, boom 11.7-45, jib 9.2/16, CW 8.5t, outrigger 7.46m, radius 3-38); getCraneById now accepts customCranes fallback param
+- analysis.ts: jib mode prefers active page jibTable via lookupJibCapacity(offset=|boomAngle−jibAngle| clamped 0..60); falls back to jibCapacityFactor when no table; info warning JIB_TABLE
+- store.ts: customCranes CRUD (addCustomCrane seeds empty-paged chart via exported seedCustomChart, updateCustomCrane, removeCustomCrane cleans charts+selection), exported makeCustomCraneId; resetAll clears customCranes
+
+Stage Summary:
+- Contract for UI agents: getChartFor(craneId, customCharts)→normalized chart; getActivePage(chart)→LoadChartPage{sections,jibTable,notes,label,counterweightT}; ALL table edits must go through updateActivePageSections/updateActivePageJibTable/updateActivePageNotes + setCustomChart; page switching via setActivePage; pages CRUD via addChartPage/removeChartPage; custom cranes via store.customCranes + getCraneById(id, customCranes)
+- tsc clean for app code
+---
+Task ID: 7-d
+Agent: lmi-shell-agent
+Task: LMI-style tile toolbar + status bar
+
+Work Log:
+- Read worklog + core APIs (store/cranes/analysis/load-charts/ScenePanel); verified lucide-react 0.525 exports for every icon used via node substring scan of dist/lucide-react.d.ts (Anvil, MoveHorizontal, Ruler, Compass, ArrowDownToLine, Wind, Scale, CalendarClock, CheckCircle2, LucideIcon type — all FOUND; CheckCircle2 false-negative in first shell loop was an rg/timeout artifact)
+- Created src/components/cranelift/LmiStatusBar.tsx: "use client", self-contained (no props), store selectors inputs/result/meta/selectedCraneId/customCranes; getCraneById(id, customCranes); <section aria-label="نوار وضعیت LMI"> with border-t bg-slate-100 dark:bg-slate-900/80, max-w-1400 inner, scroll-slim overflow-x-auto chips row
+- Chips (icon amber + Persian label + dir=ltr tabular-nums value + unit): شعاع/MoveHorizontal/متر، بوم/Ruler/متر، زاویه بوم (result?.boomAngleDeg ?? inputs.boomAngleDeg)/Compass/°، قلاب (ارتفاع نیاز)/ArrowDownToLine/متر، باد/Wind/m/s (danger red chip when inputs.windSpeedMs > crane.specs.windLimitMs, no danger when crane null), بار کل (load+hook+rigging)/Scale/تن
+- LMI gauge chip prominent: result present → border-2 colored by STATUS_COLORS[status], «Act {grossLoadT}t» «{Math.round(utilizationPct)}%» (— when null) «Max {ratedCapacityT ?? —}t» (LTR tabular-nums) + mini progress bar width clamp(util,0,100)% bg=STATUS_COLORS[status]; result null → dashed placeholder «Act — | —% | Max —»
+- کانترویت chip: Anvil icon, crane?.specs.counterweightT fmt1 or «—»; پروژه chip: CalendarClock + meta.projectId (dir=ltr) + «•» + new Date(meta.date).toLocaleDateString("fa-IR") (guarded invalid date → «—»); shared Chip helper with danger prop; fmt1 = round to 1 decimal
+- Reworked CraneLiftApp.tsx: merged old header + numbered-pill stepper into ONE LMI tile bar — sticky <header> steel look (bg-slate-200/90 dark:bg-slate-900/90 border-b, inset white/black inner shadows, backdrop-blur) containing: compact logo (HardHat amber tile + «CraneLift Pro 3D» sm:block) at start, <nav aria-label="مراحل برنامه‌ریزی لیفت"> scroll-slim overflow-x-auto with <ol> of 6 square tiles (TILE_SIZE = size-13 sm:size-16 md:size-18 = 52/64/72px), ThemeToggle + Reset (RotateCcw) as same-size tiles at end
+- Tile anatomy: icon size-6 + text-[10px] line-clamp-2 label, rounded-lg border-2; active = border-amber-500 bg-amber-500/15 text-amber-600 dark:text-amber-400 shadow-[0_0_14px_rgba(245,158,11,0.45)]; done = green border/text + CheckCircle2 size-4 badge absolute -end-1 -top-1 (rounded-full bg-background); disabled (canGo false) = opacity-40 + cursor-not-allowed; aria-current="step" + title kept (title explains «ابتدا جرثقیل انتخاب کنید» when gated); RTL-safe logical classes (-end-1, no left/right)
+- canGo/handleNext gating logic untouched (step 0 requires crane via canGo + next-gate toast; step 4 requires result via next-gate toast); footer prev/next + «مرحله X از ۶» untouched; ScenePanel layout, hidden #loadchart-curve host, Splash, ThemeProvider untouched; removed unused meta selector + old header crane/project chips (projectId+date now live in LmiStatusBar); getCraneById now receives customCranes
+- Rendered <LmiStatusBar /> between <main> (+hidden chart host) and <footer> (in flow, footer keeps mt-auto sticky-footer rule); verified with bunx tsc --noEmit (only pre-existing examples/+skills/ errors remain) and bunx eslint on both files (clean); did NOT run dev/build
+
+Stage Summary:
+- New reusable LmiStatusBar (default export, zero props) — reads everything from useLiftStore; drop it anywhere in the layout for the LMI status strip; wind-danger coloring requires a selected crane (by design)
+- CraneLiftApp shell is now LMI-style: one sticky steel bar = logo | 6 square step tiles (amber glow active / green check done / opacity-40 gated) | theme+reset tiles; old numbered pills and header chips removed
+- All custom cranes resolved via getCraneById(id, customCranes) in the shell; status bar shows live inputs (radius/boom/angle/hook/wind/gross), analysis gauge (Act/%/Max + status-colored bar), counterweight, projectId + fa-IR date
+---
+Task ID: 7-b
+Agent: custom-crane-agent
+Task: Custom crane builder (CustomCraneDialog + Step1Crane)
+
+Work Log:
+- Read worklog (last 150 lines) + types.ts / store.ts / cranes.ts / Step1Crane.tsx; verified dialog/select/slider/textarea/input shadcn APIs, lucide icon availability (CirclePlus/PlusCircle/Pencil/Trash2/Wrench/Save/Info/TriangleAlert), slider data-slots (slider-range/slider-thumb), scroll-slim in globals.css, and eslint config (no-img-element OFF).
+- Created EXACTLY 1 new file: src/components/cranelift/CustomCraneDialog.tsx — modified EXACTLY 1 file: src/components/cranelift/steps/Step1Crane.tsx. Nothing else touched; no new packages; no dev/build run.
+- CustomCraneDialog: default export {open, onOpenChange, editCrane?} → thin Dialog wrapper (sm:max-w-3xl) that mounts inner CraneForm only while open (keyed by editCrane?.id ?? "create") so draft state re-initializes per opening WITHOUT useEffect-setState (react-hooks/set-state-in-effect compliant). CraneForm renders DialogContent with header + scrollable body (max-h-[70vh] overflow-y-auto scroll-slim) + footer.
+- Form fields: name (required, LTR, e.g. SANY STC250), manufacturer, type Select (mobile/crawler/tower via CRANE_TYPE_LABELS, switching type auto-manages tower-only fields), Persian description Textarea, image URL (LTR, optional, live preview with broken-image note, fallback /cranes/placeholder.svg). Specs grid (NumField: type=number dir=ltr centered tabular-nums, Persian labels + units): ظرفیت اسمی(required) / بوم min-max(required max) / شعاع min-max / جیب min-max / کانترویت / وزن خود / دهانه اوت‌ریگر / حد باد(9.8) / زاویه بوم min-max(10/80) / ارتفاع پین(2.4) / فاصله پین(1.7) / ضریب کاهش جیب slider 0.5–1 step .05 (amber thumb/range). Tower: angle/jib/pivot/factor fields hidden (forced 0/0, factor 1) and freestandingHookHeightM (ارتفاع آزاد قلاب) shown instead + amber explainer.
+- Smart defaults: entering حداکثر طول بوم auto-suggests حداکثر شعاع (= boom×0.8, full boom for tower) until user manually edits maxRadius (radiusAuto flag); «پیش‌فرض‌های هوشمند» info line; parseNum supports Persian/Arabic digits + ٫ decimal.
+- Validation: name + maxCapacityT>0 + mainBoomMaxM>0 (required for ALL types since seedCustomChart derives boom/grid from it — superset of the non-tower requirement); inline red helpers with TriangleAlert + footer hint; save disabled until valid. buildSpecs() sanitizes on save (swaps/clamps min≤max, non-negative fallbacks, rounds to 0.1, clamps factor/angles).
+- Create: full Crane {id: makeCustomCraneId(name), image||placeholder} → addCustomCrane (auto-select + seeds empty paged chart via store) → toast «جرثقیل سفارشی ثبت شد — لودچارت خالی آن در مرحله ۲ پر کنید» → setStep(1) (jumps to Step2Chart editor) → close. Edit: updateCustomCrane(editCrane.id, patch) with FULL specs object, id/chart preserved, toast «مشخصات جرثقیل به‌روزرسانی شد» → close.
+- Step1Crane: preserved all existing behavior (filters, 12 preset cards, spec table, select+fit defaults). Added: (1) full-width dashed amber button-card at top «افزودن جرثقیل سفارشی / مدل و مشخصات جرثقیل خودتان را تعریف کنید» (CirclePlus) opening dialog create-mode; (2) «جرثقیل‌های من (سفارشی)» section (Wrench + amber Badge سفارشی + count) rendered before presets when customCranes.length>0, same card style with amber «سفارشی» badge on image, per-card Pencil (edit → dialog with editCrane) and Trash2 buttons (stopPropagation + second-click confirm pattern with 4s auto-reset + guidance toasts, removeCustomCrane + toast); (3) amber «سفارشی» badge + «ویرایش مشخصات این جرثقیل» button in the selected-crane spec table for custom cranes.
+- getCraneById now ALWAYS receives customCranes as 2nd arg in Step1Crane (selected resolution, handleSelect toast, fitInputsToCrane); fitInputsToCrane switched DEFAULT_LOAD_CHARTS lookup → getChartFor(id, customCharts) so custom cranes fit defaults from their seeded (empty) chart; custom-crane select toast says chart values must be entered in step 2. External https images on custom cards render via plain <img> (next/image has no remotePatterns — would throw); local /paths keep next/image; both share onError → placeholder.svg fallback. Card onKeyDown guarded with e.target!==e.currentTarget so Enter on inner edit/delete buttons doesn't re-trigger selection.
+- Verified: bunx tsc --noEmit → zero errors in app code (only pre-existing examples/ + skills/ errors); bunx eslint on both files → 0 problems; dev.log → compiled OK, GET / 200.
+
+Stage Summary:
+- CustomCraneDialog (default export, src/components/cranelift/CustomCraneDialog.tsx): props {open: boolean; onOpenChange: (open:boolean)=>void; editCrane?: Crane|null} — create mode seeds empty paged load chart + auto-selects + setStep(1); edit mode patches specs/name/manufacturer/type/image/description via updateCustomCrane(id, patch) keeping id + existing chart. Persian-digit number parsing; amber-only accent; RTL with LTR centered numeric inputs.
+- Step1Crane: custom-cranes section + create/edit/delete UI; every crane resolution passes customCranes to getCraneById; chart fit uses getChartFor(id, customCharts). No exported API change (still default export, no props) — drop-in for CraneLiftApp.
+---
+Task ID: 7-c
+Agent: chart-table-agent
+Task: Catalog-style tabular load charts (Step2 + table views)
+
+Work Log:
+- Read worklog (last 180 lines) + types.ts / load-charts.ts / store.ts / old Step2Chart / LoadChartCurve / csv.ts / run-analysis.ts / CraneLiftApp (read-only) to map the page-based chart contract before touching UI.
+- Created src/components/cranelift/LoadChartTableView.tsx ("use client", default export): catalog grid rows=radius union (asc) × cols=boom sections (asc); two-tier sticky header (corner «شعاع (متر)» rowSpan2 + «طول بوم (متر) — ظرفیت (تن)» colSpan + per-column boom values), sticky first column via inline `position:sticky; insetInlineStart:0` (RTL-correct), trailing sticky delete-row column via `insetInlineEnd:0`; wrapper `overflow-auto max-h-[520px] scroll-slim rounded-lg border`, `border-separate border-spacing-0 text-xs tabular-nums`, zebra rows (bg-muted/40 / bg-background for opaque sticky cells), «—» for empty intersections.
+  - Editable cells: Input type=number dir=ltr h-8 text-center with draft-string map keyed `${boom}|${radius}`; commit: "" → remove point from that section, positive number → upsert (round2, clamp >0) creating the section if missing, invalid → no commit + blur reverts; single onEdit(nextSections) output.
+  - Toolbar (editable only): «افزودن شعاع» inline input (placeholder = lastRadius+1 / fallback 3) → adds {radiusM, capacityT:0.1} to section matching highlight.boomLengthM (exact match, else first); duplicate radius disables button. «افزودن طول بوم» (placeholder maxBoom+5) → appends empty section (new column of dashes). Per-column X in header deletes the whole section (guard ≥1). Per-row X (sticky end) removes that radius from ALL sections. Empty-section/empty-radii placeholder states included.
+  - Highlight: amber ring (ring-2 ring-inset ring-amber-500) on cell = nearest boom column × nearest radius row; amber tint (bg-amber-500/10) on the row whose radius == highlight.radiusM.
+- Created src/components/cranelift/JibChartTableView.tsx ("use client", default export): rows=boom angle DESC (catalog 78→56), columns grouped per jib length × offset with two-tier header («جیب ۹.۲م: 0°|15°|30°» + «جیب ۱۶م: …»); global column index = jibIdx*offsets.length+offsetIdx (matches lookupJibCapacity); cells tonnes or «—»; same sticky/zebra/tabular-nums family (max-h-[420px]).
+  - Editable (onEdit given): cell inputs with draft map keyed `c-${angle}-${gi}`; commit "" → null, positive → round2 upsert at gi (caps padded), rows stay DESC; toolbar «افزودن زاویه بوم» (inline input, placeholder minAngle-2) inserts sorted row with null capacities; per-row X deletes angle row; per-offset X in header deletes that offset angle from ALL jib groups (rebuilds capacities via gi%oldLen!==offIdx, guard ≥1 offset). table?: null + onEdit → empty state with «ساخت جدول جیب خالی» seeding {jibLengthsM:[9.2,16], offsetAnglesDeg:[0,15,30], rows 78→56 step2 null}.
+  - Highlight: row tint on angle nearest highlight.boomAngleDeg; cell ring at (nearest jibLengthM group) × (nearest offset to |boomAngle−jibAngle|, same formula as analysis engine).
+- Reworked src/components/cranelift/steps/Step2Chart.tsx (same path + default export): empty no-crane state kept; header = crane name + Badge مرجع/سفارشی + Tabs view toggle «جدول کاتالوگ»(default)/«منحنی» + CSV buttons (خروجی/ورود/نمونه) + «بازگشت به مرجع» when custom.
+  - Page tab strip (always): per-page button (role=tab, amber active) + X delete on ACTIVE tab when pages>1 + «افزودن صفحه (کانفیگ جدید)» toggling inline form (label/کانترویت/قرقره) → addChartPage → asCustomEdition → setCustomChart. Page switching = setActivePage(structuredClone(chart), id) → setCustomChart (persisted so the analysis engine's chart.sections matches the viewed page even for reference charts; value-source stays «مرجع» until a value edit).
+  - Main card: stat strip (تعداد طول‌های بوم / بازه شعاع min–max / تعداد نقاط / واحد: تن) + LoadChartTableView (editable always) wrapped by handleSectionsEdit → updateActivePageSections(structuredClone(chart), sections) + source:"custom" + updatedAt → setCustomChart. Curve tab keeps LoadChartCurve inside div#step2-chart-host ONLY in curve mode (no new #loadchart-curve — CraneLiftApp owns it; verified exactly 1 in DOM).
+  - CSV import now MERGES into the ACTIVE page: csvToChart → updateActivePageSections(currentChart, resultSections) → custom → toast (rowCount + page label kept, other pages untouched).
+  - Jib card (skipped for tower cranes): JibChartTableView editable with handleJibEdit → updateActivePageJibTable(chart, activePage.id, next) + custom; if page has no jibTable → dashed empty card with «افزودن جدول جیب (مثل کاتالوگ TJ)» seeding crane-spec lengths ([jibMinM,jibMaxM]>0 fallback [9.2,16]) × offsets [0,15,30] × angles 78→56 step2 all null.
+  - Notes card «یادداشت‌های کاتالوگ»: ordered list of activePage.notes + «ویرایش یادداشت‌ها» Pencil toggle → Textarea (one note per line) → updateActivePageNotes + custom (editing notes on a reference chart also flips to سفارشی).
+  - Amber Info alert: «مقادیر قابل ویرایش هستند — لودچارت رسمی سازنده ملاک نهایی است.»
+- Verified in browser (agent-browser): STC500E page1 = 15 boom cols × 24 radius rows / 219 points stat strip; cell edit (بوم 18 × شعاع 3 → 33.5) committed, Badge flipped to سفارشی, localStorage persisted; page-2 switch = 13 cols × 22 rows; jib table = 2×3 offset columns × 12 angle rows; 8 catalog notes listed; curve tab renders #step2-chart-host with recharts SVG; «بازگشت به مرجع» restores reference and removes the button; reload clean, 0 page errors.
+- bunx tsc --noEmit: zero errors in my three files (only pre-existing examples/ + skills/ errors remain, not owned). bunx eslint on the three files: clean.
+
+Stage Summary:
+- LoadChartTableView (default export) props: { chart: LoadChart; editable: boolean; onEdit(nextSections: LoadChartSection[]): void; highlight?: { radiusM?; grossLoadT?; boomLengthM? } } — renders ACTIVE-page sections as catalog grid; ALL internal mutations (cell upsert/delete, add radius, add boom column, delete column/row) exit through the single onEdit(nextSections) callback; parent MUST wrap with updateActivePageSections + source:"custom" + updatedAt + setCustomChart.
+- JibChartTableView (default export) props: { table?: JibChartTable | null; onEdit?(next: JibChartTable): void; highlight?: { boomAngleDeg?; jibLengthM?; jibAngleDeg? } } — onEdit presence = editable mode; edits flow updateActivePageJibTable(chart, activePageId, nextTable) + custom; column indexing contract gi = jibIdx*offsets.length+offsetIdx shared with lookupJibCapacity.
+- Step2Chart edit-flow contract: every value edit = structuredClone(chart) → load-charts helper (updateActivePageSections / updateActivePageJibTable / updateActivePageNotes / addChartPage / removeChartPage) → asCustomEdition (source:"custom", updatedAt now) → setCustomChart(crane.id, next); page SWITCHING persists via setActivePage without flipping source (keeps analysis/view in sync on reference charts); CSV import lands in the active page only; capture host #step2-chart-host rendered only in curve mode; #loadchart-curve untouched (CraneLiftApp).
+
+---
+Task ID: 8
+Agent: main coordinator (integration)
+Task: Integration fixes + assets + verification of 7-b/7-c/7-d
+
+Work Log:
+- Fixed custom-crane resolution: Step2Chart + Step3Inputs + Step5Analysis + Step6Report + ScenePanel + CraneScene + run-analysis now pass customCranes into getCraneById (custom cranes previously invisible outside Step1)
+- Fixed lookupJibCapacity: offsets beyond table edge are now CLAMPED to [min,max] offset columns (was extrapolating: offset 46° gave 1.5t; now correct 2.0t at 30° column)
+- Downloaded + normalized real SANY STC500E photo → public/cranes/stc500e.jpg (800×450 JPEG via image-search + sharp)
+- Verified PDF export still works with paged charts (4-page report, rated 15.0t @ R10/B26.2 = exact catalog value)
+
+Stage Summary:
+- eslint clean, tsc clean (app code), dev.log clean (only benign THREE deprecation warnings)

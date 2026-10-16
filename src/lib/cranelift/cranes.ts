@@ -328,10 +328,37 @@ export const CRANES: Crane[] = [
     description:
       "جرثقیل برجی بدون کلاهک (Topless) پوتن ۲۰ تنی با جیب تا ۸۰ متر؛ مناسب پروژه‌های بزرگ عمرانی با چند جرثقیل هم‌زمان.",
   },
+  // ─────────────────────── SANY STC500E (۲۳款) ───────────────────────
+  {
+    id: "stc500e",
+    name: "SANY STC500E",
+    manufacturer: "SANY",
+    type: "mobile",
+    image: "/cranes/stc500e.jpg",
+    specs: spec(
+      50,           // حداکثر ظرفیت (تن)
+      [11.7, 45],   // بوم: ۱۱.۷ تا ۴۵ متر (۵ تکه)
+      [9.2, 16],    // جیب: ۹.۲ و ۱۶ متر (دو طبقه)
+      0.75,         // فقط برای حالت بدون جدول جیب
+      39,           // وزن خود (۳۹۰۰۰kg بدون کانترویت کمکی)
+      8.5,          // کانترویت کامل: ۶ + ۲.۵
+      7.46,         // دهانه اوت‌ریگر ۷.۴۶ × ۶.۰۵ متر
+      9.8,          // حد باد کاری
+      [10, 80],     // زاویه بوم
+      2.3,          // ارتفاع پین بوم (تقریب)
+      1.5,          // فاصله پین بوم از مرکز دوران (تقریب)
+      [3, 38]       // محدوده شعاع جدول کاتالوگ
+    ),
+    description:
+      "جرثقیل ۸×۴ سه‌به‌سه ۵۰ تنی سانی با بوم U شکل ۴۵ متری، جیب ۱۶ متری، گشتاور ۱۶۴۴kN·m و لودچارت رسمی کاتالوگ (کانترویت ۸.۵/۶ تن).",
+  },
 ];
 
-/** یافتن جرثقیل با شناسه */
-export function getCraneById(id: string | null | undefined): Crane | undefined {
+/** یافتن جرثقیل با شناسه (جرثقیل‌های سفارشی کاربر هم جستجو می‌شوند) */
+export function getCraneById(
+  id: string | null | undefined,
+  customCranes: Crane[] = []
+): Crane | undefined {
   if (!id) return undefined;
-  return CRANES.find((c) => c.id === id);
+  return CRANES.find((c) => c.id === id) ?? customCranes.find((c) => c.id === id);
 }

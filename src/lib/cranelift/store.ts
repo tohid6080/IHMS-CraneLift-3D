@@ -10,10 +10,61 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type {
   AnalysisResult,
+  Crane,
   LiftInputs,
   LoadChart,
   ProjectMeta,
 } from "./types";
+
+/** ساخت شناسه یکتا برای جرثقیل سفارشی */
+export function makeCustomCraneId(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u0600-\u06FF]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+  return `custom-${slug || "crane"}-${Date.now().toString(36)}`;
+}
+
+/**
+ * لودچارت اولیه برای جرثقیل سفارشی: گرید خالی (طول‌های بوم × شعاع‌ها)
+ * بدون هیچ مقدار — کاربر باید مقادیر را از لودچارت رسمی وارد کند.
+ */
+export function seedCustomChart(crane: Crane): LoadChart {
+  const s = crane.specs;
+  const isTower = crane.type === "tower";
+  const boomSteps = 3;
+  const boomLens: number[] = [];
+  for (let i = 0; i < boomSteps; i++) {
+    const v = s.mainBoomMinM + ((s.mainBoomMaxM - s.mainBoomMinM) * i) / (boomSteps - 1);
+    boomLens.push(Math.round(v * 10) / 10);
+  }
+  const radii: number[] = [];
+  const step = Math.max(1, Math.round((s.maxRadiusM - s.minRadiusM) / 8));
+  for (let r = s.minRadiusM; r <= s.maxRadiusM; r += step) {
+    radii.push(Math.round(r * 10) / 10);
+  }
+  return {
+    craneId: crane.id,
+    source: "custom",
+    updatedAt: new Date().toISOString(),
+    sections: boomLens.map((boomLengthM) => ({ boomLengthM, points: [] })),
+    pages: [
+      {
+        id: "main",
+        label: `جدول اصلی${s.counterweightT ? ` — کانترویت ${s.counterweightT} تن` : ""}`,
+        counterweightT: s.counterweightT,
+        partsOfLinePct: 100,
+        sections: boomLens.map((boomLengthM) => ({ boomLengthM, points: [] })),
+        notes: isTower
+          ? []
+          : ["مقادیر جدول را از لودچارت رسمی سازنده وارد کنید (سلول خالی = غیرمجاز)."],
+      },
+    ],
+    activePageId: "main",
+  };
+}
 
 /** ورودی‌های پیش‌فرض لیفت */
 export const DEFAULT_INPUTS: LiftInputs = {
@@ -66,6 +117,12 @@ interface CraneLiftState {
   selectedCraneId: string | null;
   selectCrane: (id: string | null) => void;
 
+  // ── جرثقیل‌های سفارشی کاربر ──
+  customCranes: Crane[];
+  addCustomCrane: (crane: Crane) => void; // + ساخت لودچارت خالی اولیه
+  updateCustomCrane: (id: string, patch: Partial<Crane>) => void;
+  removeCustomCrane: (id: string) => void;
+
   // ── لودچارت سفارشی ──
   customCharts: Record<string, LoadChart>;
   setCustomChart: (craneId: string, chart: LoadChart) => void;
@@ -111,6 +168,35 @@ export const useLiftStore = create<CraneLiftState>()(
       selectedCraneId: null,
       selectCrane: (id) => {
         set({ selectedCraneId: id, result: null });
+      },
+
+      // جرثقیل‌های سفارشی
+      customCranes: [],
+      addCustomCrane: (crane) => {
+        const seed = seedCustomChart(crane);
+        set({
+          customCranes: [...get().customCranes, crane],
+          customCharts: { ...get().customCharts, [crane.id]: seed },
+          selectedCraneId: crane.id,
+          result: null,
+        });
+      },
+      updateCustomCrane: (id, patch) => {
+        set({
+          customCranes: get().customCranes.map((c) =>
+            c.id === id ? { ...c, ...patch } : c
+          ),
+        });
+      },
+      removeCustomCrane: (id) => {
+        const next = { ...get().customCharts };
+        delete next[id];
+        set({
+          customCranes: get().customCranes.filter((c) => c.id !== id),
+          customCharts: next,
+          selectedCraneId: get().selectedCraneId === id ? null : get().selectedCraneId,
+          result: null,
+        });
       },
 
       // لودچارت
@@ -166,6 +252,7 @@ export const useLiftStore = create<CraneLiftState>()(
           step: 0,
           meta: defaultMeta(),
           selectedCraneId: null,
+          customCranes: [],
           customCharts: {},
           inputs: DEFAULT_INPUTS,
           result: null,

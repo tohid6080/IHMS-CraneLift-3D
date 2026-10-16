@@ -90,7 +90,8 @@ export default function Step5Analysis() {
   const radiusM = useLiftStore((s) => s.inputs.radiusM);
   const setStep = useLiftStore((s) => s.setStep);
 
-  const crane = getCraneById(selectedId);
+  const customCranes = useLiftStore((s) => s.customCranes);
+  const crane = getCraneById(selectedId, customCranes);
 
   if (!crane) {
     return (

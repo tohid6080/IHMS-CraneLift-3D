@@ -7,7 +7,14 @@
  * لودچارت رسمی سازنده را از طریق ویرایش یا آپلود CSV جایگزین کند.
  */
 
-import type { CraneType, LoadChart, LoadChartSection } from "./types";
+import type {
+  CraneType,
+  JibLookupInfo,
+  LoadChart,
+  LoadChartPage,
+  LoadChartSection,
+} from "./types";
+import { STC500E_CHART_PAGES } from "./stc500e-chart";
 
 /** ساخت سریع یک بخش از لودچارت: [شعاع, ظرفیت][...] */
 const sec = (boomLengthM: number, pts: [number, number][]): LoadChartSection => ({
@@ -15,17 +22,20 @@ const sec = (boomLengthM: number, pts: [number, number][]): LoadChartSection => 
   points: pts.map(([radiusM, capacityT]) => ({ radiusM, capacityT })),
 });
 
-/** نمونه‌سازی لودچارت */
+/** نمونه‌سازی لودچارت (تک‌صفحه‌ای — برای چارت‌های مرجع ساده) */
 const chart = (
   craneId: string,
   sections: LoadChartSection[],
-  type: CraneType
+  type: CraneType,
+  pages?: LoadChartPage[]
 ): LoadChart => ({
   craneId,
   sections: sections.sort((a, b) => a.boomLengthM - b.boomLengthM),
   source: "default",
   updatedAt: new Date("2024-01-01").toISOString(),
-  ...(type === "tower" ? {} : {}),
+  ...(pages
+    ? { pages, activePageId: pages[0]?.id, sections: [...pages[0].sections].sort((a, b) => a.boomLengthM - b.boomLengthM) }
+    : {}),
 });
 
 /** لودچارت‌های مرجع — کلید: شناسه جرثقیل */
@@ -332,16 +342,20 @@ export const DEFAULT_LOAD_CHARTS: Record<string, LoadChart> = {
       [72, 4.2], [74, 4.1], [76, 4.0], [78, 3.9], [80, 3.8],
     ]),
   ], "tower"),
+
+  // ─────────────── SANY STC500E (۵۰ تن) — کاتالوگ واقعی چندصفحه‌ای ───────────────
+  "stc500e": chart("stc500e", STC500E_CHART_PAGES[0].sections, "mobile", STC500E_CHART_PAGES),
 };
 
 /**
- * دریافت لودچارت جرثقیل: سفارشی (در صورت وجود) در اولویت است
+ * دریافت لودچارت جرثقیل: سفارشی (در صورت وجود) در اولویت است — همیشه نرمال‌شده
  */
 export function getChartFor(
   craneId: string,
   customCharts: Record<string, LoadChart>
 ): LoadChart | null {
-  return customCharts[craneId] ?? DEFAULT_LOAD_CHARTS[craneId] ?? null;
+  const raw = customCharts[craneId] ?? DEFAULT_LOAD_CHARTS[craneId] ?? null;
+  return raw ? normalizeChart(raw) : null;
 }
 
 /** مرتب‌سازی نقاط یک بخش لودچارت بر اساس شعاع */
@@ -354,5 +368,225 @@ export function sortChart(chart: LoadChart): LoadChart {
         points: [...s.points].sort((a, b) => a.radiusM - b.radiusM),
       }))
       .sort((a, b) => a.boomLengthM - b.boomLengthM),
+  };
+}
+
+// ═════════════ صفحات لودچارت (مطابق کاتالوگ واقعی) ═════════════
+
+/**
+ * نرمال‌سازی چارت: اگر صفحات ندارد (چارت‌های قدیمی/CSV)، سکشن‌ها را
+ * در یک صفحه می‌پیچد تا ساختار «کاتالوگ چندصفحه‌ای» یکدست باشد.
+ */
+export function normalizeChart(c: LoadChart): LoadChart {
+  if (c.pages && c.pages.length > 0) return c;
+  const page: LoadChartPage = {
+    id: "main",
+    label: "جدول اصلی",
+    sections: c.sections,
+    notes: [],
+  };
+  return { ...c, pages: [page], activePageId: page.id };
+}
+
+/** صفحه فعال چارت (با fallback امن) */
+export function getActivePage(chart: LoadChart): LoadChartPage {
+  const norm = normalizeChart(chart);
+  const pages = norm.pages!;
+  return pages.find((p) => p.id === norm.activePageId) ?? pages[0];
+}
+
+/** تغییر صفحه فعال (مثل ورق‌زدن کاتالوگ) */
+export function setActivePage(chart: LoadChart, pageId: string): LoadChart {
+  const norm = normalizeChart(chart);
+  const page = norm.pages!.find((p) => p.id === pageId);
+  if (!page) return norm;
+  return {
+    ...norm,
+    activePageId: pageId,
+    sections: [...page.sections].sort((a, b) => a.boomLengthM - b.boomLengthM),
+  };
+}
+
+/**
+ * به‌روزرسانی سکشن‌های صفحه فعال (هیچ ویرایشی در جدول‌ها بدون این helper
+ * انجام نشود تا sections و pages همیشه همگن بمانند).
+ */
+export function updateActivePageSections(
+  chart: LoadChart,
+  sections: LoadChartSection[]
+): LoadChart {
+  const norm = normalizeChart(chart);
+  const activeId = getActivePage(norm).id;
+  const sorted = sections
+    .map((s) => ({
+      ...s,
+      points: [...s.points].sort((a, b) => a.radiusM - b.radiusM),
+    }))
+    .sort((a, b) => a.boomLengthM - b.boomLengthM);
+  return {
+    ...norm,
+    sections: sorted,
+    pages: norm.pages!.map((p) =>
+      p.id === activeId ? { ...p, sections: sorted } : p
+    ),
+  };
+}
+
+/** به‌روزرسانی جدول جیب صفحه فعال */
+export function updateActivePageJibTable(
+  chart: LoadChart,
+  pageId: string,
+  jibTable: LoadChartPage["jibTable"]
+): LoadChart {
+  const norm = normalizeChart(chart);
+  return {
+    ...norm,
+    pages: norm.pages!.map((p) => (p.id === pageId ? { ...p, jibTable } : p)),
+  };
+}
+
+/** به‌روزرسانی یادداشت‌های صفحه فعال */
+export function updateActivePageNotes(
+  chart: LoadChart,
+  notes: string[]
+): LoadChart {
+  const norm = normalizeChart(chart);
+  const activeId = getActivePage(norm).id;
+  return {
+    ...norm,
+    pages: norm.pages!.map((p) => (p.id === activeId ? { ...p, notes } : p)),
+  };
+}
+
+/** افزودن صفحه جدید (کانفیگ کانترویت جدید) */
+export function addChartPage(
+  chart: LoadChart,
+  label: string,
+  counterweightT?: number,
+  partsOfLinePct?: number
+): LoadChart {
+  const norm = normalizeChart(chart);
+  const id = `page-${Date.now().toString(36)}`;
+  const page: LoadChartPage = {
+    id,
+    label,
+    counterweightT,
+    partsOfLinePct,
+    sections: [],
+    notes: [],
+  };
+  return {
+    ...norm,
+    pages: [...norm.pages!, page],
+    activePageId: id,
+    sections: [],
+  };
+}
+
+/** حذف صفحه (حداقل یک صفحه باید بماند) */
+export function removeChartPage(chart: LoadChart, pageId: string): LoadChart {
+  const norm = normalizeChart(chart);
+  if (norm.pages!.length <= 1) return norm;
+  const pages = norm.pages!.filter((p) => p.id !== pageId);
+  const next = {
+    ...norm,
+    pages,
+    activePageId:
+      norm.activePageId === pageId ? pages[0].id : norm.activePageId,
+  };
+  return setActivePage(next, next.activePageId!);
+}
+
+// ═════════════ درون‌یابی جدول جیب ═════════════
+
+/**
+ * ظرفیت از جدول جیب (مطابق کاتالوگ TJ):
+ * ورودی‌ها: جدول جیب، طول جیب، انحراف جیب نسبت به بوم، زاویه بوم
+ * خروجی: درون‌یابی خطی بین ردیف‌های زاویه بوم و ستون‌های انحراف
+ */
+export function lookupJibCapacity(
+  table: NonNullable<LoadChartPage["jibTable"]>,
+  jibLengthM: number,
+  offsetDeg: number,
+  boomAngleDeg: number
+): JibLookupInfo {
+  const rows = [...table.rows].sort((a, b) => b.boomAngleDeg - a.boomAngleDeg); // نزولی مثل کاتالوگ
+  if (rows.length === 0 || table.offsetAnglesDeg.length === 0) {
+    return { capacityT: null, boomAngleUsedDeg: null, offsetUsedDeg: null, interpolated: false };
+  }
+
+  // طول جیب: نزدیک‌ترین طول موجود (جدول‌ها معمولاً دو طول دارند)
+  const jibIndex = table.jibLengthsM.reduce(
+    (best, len, i) =>
+      Math.abs(len - jibLengthM) < Math.abs(table.jibLengthsM[best] - jibLengthM) ? i : best,
+    0
+  );
+
+  // زاویه انحراف: clamp به بازه جدول + درون‌یابی خطی بین ستون‌ها
+  const offsets = [...table.offsetAnglesDeg].sort((a, b) => a - b);
+  const offsetClamped = Math.min(Math.max(offsetDeg, offsets[0]), offsets[offsets.length - 1]);
+  let offA = offsets[0];
+  let offB = offsets[offsets.length - 1];
+  for (let i = 1; i < offsets.length; i++) {
+    if (offsetClamped <= offsets[i]) {
+      offA = offsets[i - 1];
+      offB = offsets[i];
+      break;
+    }
+  }
+  const offInterp =
+    offB === offA ? 0 : (offsetClamped - offA) / (offB - offA);
+  const colA = jibIndex * offsets.length + offsets.indexOf(offA);
+  const colB = jibIndex * offsets.length + offsets.indexOf(offB);
+
+  // زاویه بوم: درون‌یابی بین ردیف‌ها (خارج از محدوده = null)
+  const maxAngle = rows[0].boomAngleDeg;
+  const minAngle = rows[rows.length - 1].boomAngleDeg;
+  if (boomAngleDeg > maxAngle || boomAngleDeg < minAngle) {
+    return { capacityT: null, boomAngleUsedDeg: null, offsetUsedDeg: null, interpolated: false };
+  }
+
+  let rowA = rows[0];
+  let rowB = rows[0];
+  for (let i = 1; i < rows.length; i++) {
+    if (boomAngleDeg >= rows[i].boomAngleDeg) {
+      rowA = rows[i - 1];
+      rowB = rows[i];
+      break;
+    }
+  }
+  const capAt = (row: typeof rowA, col: number): number | null =>
+    row.capacities[col] ?? null;
+
+  const valAA = capAt(rowA, colA);
+  const valAB = capAt(rowA, colB);
+  const valBA = capAt(rowB, colA);
+  const valBB = capAt(rowB, colB);
+  if (valAA === null && valAB === null && valBA === null && valBB === null) {
+    return { capacityT: null, boomAngleUsedDeg: null, offsetUsedDeg: null, interpolated: false };
+  }
+
+  const mix = (a: number | null, b: number | null): number | null => {
+    if (a === null) return b;
+    if (b === null) return a;
+    return a + offInterp * (b - a);
+  };
+  const capTop = mix(valAA, valAB);
+  const capBottom = mix(valBA, valBB);
+  const t =
+    rowB.boomAngleDeg === rowA.boomAngleDeg
+      ? 0
+      : (boomAngleDeg - rowB.boomAngleDeg) / (rowA.boomAngleDeg - rowB.boomAngleDeg);
+  const a = capTop ?? capBottom;
+  const b = capBottom ?? capTop;
+  if (a === null || b === null) {
+    return { capacityT: null, boomAngleUsedDeg: null, offsetUsedDeg: null, interpolated: false };
+  }
+  return {
+    capacityT: a + t * (b - a),
+    boomAngleUsedDeg: boomAngleDeg,
+    offsetUsedDeg: offsetDeg,
+    interpolated:
+      offInterp !== 0 || boomAngleDeg !== rowA.boomAngleDeg,
   };
 }

@@ -616,7 +616,8 @@ function SceneContent() {
   const result = useLiftStore((s) => s.result);
   const view = useView3D();
 
-  const crane = getCraneById(selectedId);
+  const customCranes = useLiftStore((s) => s.customCranes);
+  const crane = getCraneById(selectedId, customCranes);
   const geo = useMemo(() => (crane ? solveGeometry(crane, inputs) : null), [crane, inputs]);
 
   const statusColor = result ? STATUS_COLORS[result.status] : "#a1a1aa";
