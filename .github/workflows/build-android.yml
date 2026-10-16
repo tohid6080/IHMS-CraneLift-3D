@@ -59,12 +59,31 @@ jobs:
       - name: Wire Bazaar billing plugin (Poolakey)
         run: |
           set -e
-          # ۱) افزودنِ classpathِ کاتلین به build.gradleِ سطحِ پروژه
-          sed -i "/classpath 'com.google.gms:google-services/a\\        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24'" android/build.gradle
+          # ۱) افزودنِ classpathِ کاتلین + مخزنِ JitPack (Poolakey از طریقِ
+          # JitPack توزیع می‌شود، نه Maven Central/Google — با sedِ ساده
+          # قابلِ‌انجام نبود چون هر دو بلاکِ repositories در این فایل عیناً
+          # یک‌شکل‌اند؛ با پایتون دقیقاً فقط بلاکِ allprojects هدف گرفته می‌شود)
+          python3 << 'PY_EOF'
+          p = "android/build.gradle"
+          s = open(p).read()
+          s = s.replace(
+              "classpath 'com.google.gms:google-services:4.4.0'",
+              "classpath 'com.google.gms:google-services:4.4.0'\n        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24'",
+              1,
+          )
+          s = s.replace(
+              "allprojects {\n    repositories {\n        google()\n        mavenCentral()\n    }\n}",
+              "allprojects {\n    repositories {\n        google()\n        mavenCentral()\n        maven { url 'https://jitpack.io' }\n    }\n}",
+              1,
+          )
+          open(p, "w").write(s)
+          PY_EOF
 
-          # ۲) اعمالِ پلاگینِ kotlin-android و افزودنِ وابستگیِ Poolakey در build.gradleِ اپ
+          # ۲) اعمالِ پلاگینِ kotlin-android و افزودنِ وابستگیِ Poolakey
+          # (مختصاتِ JitPack: com.github.cafebazaar.Poolakey:poolakey — تأییدشده
+          # از README رسمیِ github.com/cafebazaar/Poolakey، نسخه‌ی ۲.۳.۰)
           sed -i "s/apply plugin: 'com.android.application'/apply plugin: 'com.android.application'\napply plugin: 'kotlin-android'/" android/app/build.gradle
-          sed -i "/implementation project(':capacitor-cordova-android-plugins')/a\\    implementation \"org.jetbrains.kotlin:kotlin-stdlib:1.9.24\"\\n    implementation \"ir.cafebazaar.poolakey:poolakey:1.6.0\"" android/app/build.gradle
+          sed -i "/implementation project(':capacitor-cordova-android-plugins')/a\\    implementation \"org.jetbrains.kotlin:kotlin-stdlib:1.9.24\"\\n    implementation \"com.github.cafebazaar.Poolakey:poolakey:2.3.0\"" android/app/build.gradle
 
           # ۳) کپیِ سورسِ Kotlinِ پلاگین
           mkdir -p android/app/src/main/java/com/ihms/cranelift3d
