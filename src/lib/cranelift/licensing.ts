@@ -1,0 +1,160 @@
+/**
+ * CraneLift Pro 3D — موتور لایسنس و محدودیت نسخه رایگان (Freemium)
+ * -----------------------------------------------------------
+ * طرح پیاده‌سازی‌شده: رایگان تا سقف مشخص + کد فعال‌سازی Pro (پرداخت یک‌بار).
+ * کدها در نسخه دمو داخل کد هستند؛ در نسخه تجاری باید از سرور اعتبارسنجی شوند.
+ */
+
+export type PlanType = "free" | "pro";
+
+export interface LicenseState {
+  plan: PlanType;
+  code?: string;
+  activatedAt?: string; // ISO
+}
+
+export const DEFAULT_LICENSE: LicenseState = { plan: "free" };
+
+/** کدهای فعال‌سازی نمونه (دمو) — در نسخه تجاری به‌جای این لیست، اعتبارسنجی سروری قرار می‌گیرد */
+export const PRO_DEMO_CODES = [
+  "CLP-PRO-2024-0007",
+  "CLP-PRO-2024-1042",
+  "CLP-PRO-2024-3391",
+  "CLP-LIFE-2024-0001",
+];
+
+export function normalizeCode(code: string): string {
+  return code.trim().toUpperCase().replace(/\s+/g, "");
+}
+
+export function isValidCode(code: string): boolean {
+  return PRO_DEMO_CODES.includes(normalizeCode(code));
+}
+
+// ───────────────────────── سهمیه نسخه رایگان ─────────────────────────
+
+export type QuotaKind = "analysis" | "rope" | "pdf";
+
+export const FREE_LIMITS: Record<QuotaKind, number> = {
+  analysis: 5, // تحلیل در روز
+  rope: 5, // استفاده از محاسبه‌گر سیم بکسل در روز
+  pdf: 1, // گزارش PDF در روز (با واترمارک)
+};
+
+export const QUOTA_LABELS: Record<QuotaKind, string> = {
+  analysis: "اجرای تحلیل",
+  rope: "محاسبه‌گر سیم بکسل",
+  pdf: "خروجی گزارش PDF",
+};
+
+export interface UsageCounters {
+  date: string; // YYYY-MM-DD محلی
+  analysis: number;
+  rope: number;
+  pdf: number;
+}
+
+export function todayKey(): string {
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+export function freshUsage(): UsageCounters {
+  return { date: todayKey(), analysis: 0, rope: 0, pdf: 0 };
+}
+
+/** نتیجه بررسی سهمیه */
+export interface QuotaCheck {
+  ok: boolean;
+  remaining: number; // Infinity = نامحدود
+  limit: number | null; // null = نامحدود (Pro)
+  used: number;
+}
+
+export function isPro(license: LicenseState | undefined | null): boolean {
+  return license?.plan === "pro";
+}
+
+/** بررسی سهمیه یک قابلیت — بدون مصرف */
+export function quotaCheck(
+  plan: PlanType,
+  usage: UsageCounters | undefined | null,
+  kind: QuotaKind
+): QuotaCheck {
+  const used = usage?.date === todayKey() ? (usage[kind] ?? 0) : 0;
+  if (plan === "pro") return { ok: true, remaining: Infinity, limit: null, used };
+  const limit = FREE_LIMITS[kind];
+  return { ok: used < limit, remaining: Math.max(0, limit - used), limit, used };
+}
+
+/** مصرف یک واحد سهمیه (برگرداندن شمارنده جدید) */
+export function consumeQuota(
+  plan: PlanType,
+  usage: UsageCounters | undefined | null,
+  kind: QuotaKind
+): UsageCounters {
+  const base = usage?.date === todayKey() ? usage : freshUsage();
+  return { ...base, [kind]: (base[kind] ?? 0) + 1 };
+}
+
+/** متن نمایشی باقی‌مانده سهمیه */
+export function remainingText(c: QuotaCheck): string {
+  if (c.limit === null) return "نامحدود";
+  return `${c.remaining} از ${c.limit}`;
+}
+
+// ───────────────────────── اطلاعات پلن‌ها (برای دیالوگ ارتقا) ─────────────────────────
+
+export interface PlanInfo {
+  id: PlanType | "enterprise";
+  title: string;
+  price: string;
+  period: string;
+  features: { ok: boolean; text: string }[];
+}
+
+export const PLANS: PlanInfo[] = [
+  {
+    id: "free",
+    title: "رایگان",
+    price: "۰ تومان",
+    period: "برای همیشه",
+    features: [
+      { ok: true, text: "۱۳ جرثقیل مرجع + جرثقیل سفارشی" },
+      { ok: true, text: "لودچارت جدولی کاتالوگی + ویرایش و ورود CSV" },
+      { ok: true, text: "صحنه سه‌بعدی ایستا با پرچم‌های A/B" },
+      { ok: true, text: "۵ تحلیل در روز + محاسبه‌گر سیم بکسل (۵ بار در روز)" },
+      { ok: true, text: "۱ گزارش PDF در روز (با واترمارک)" },
+      { ok: false, text: "شبیه‌سازی حرکت جرثقیل بین دو پرچم (Play)" },
+      { ok: false, text: "تحلیل و گزارش نامحدود بدون واترمارک" },
+    ],
+  },
+  {
+    id: "pro",
+    title: "حرفه‌ای (Pro)",
+    price: "۴٬۹۰۰٬۰۰۰ تومان",
+    period: "پرداخت یک‌بار — مادام‌العمر، یک ایستگاه کاری",
+    features: [
+      { ok: true, text: "همه امکانات نسخه رایگان" },
+      { ok: true, text: "شبیه‌سازی سه‌بعدی حرکت: برداشت از پرچم A و جایگذاری در B" },
+      { ok: true, text: "تحلیل نامحدود + محاسبه‌گر سیم بکسل نامحدود" },
+      { ok: true, text: "گزارش PDF نامحدود، بدون واترمارک + امضای مهندس" },
+      { ok: true, text: "تحلیل جابجایی دوعرچه‌ای با راهکار اصلاح ایرادها" },
+      { ok: true, text: "به‌روزرسانی لودچارت جرثقیل‌های جدید" },
+    ],
+  },
+  {
+    id: "enterprise",
+    title: "سازمانی",
+    price: "تماس بگیرید",
+    period: "چند کاربره — نصب درون‌سازمانی",
+    features: [
+      { ok: true, text: "همه امکانات Pro برای تمام کاربران" },
+      { ok: true, text: "لوگو و برند اختصاصی در گزارش‌ها" },
+      { ok: true, text: "بانک مرکزی لودچارت‌های شرکت + کنترل نسخه" },
+      { ok: true, text: "پشتیبانی اختصاصی و آموزش تیم فنی" },
+    ],
+  },
+];

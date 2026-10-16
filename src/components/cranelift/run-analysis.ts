@@ -9,8 +9,10 @@ import { useLiftStore } from "@/lib/cranelift/store";
 import { getCraneById } from "@/lib/cranelift/cranes";
 import { getChartFor } from "@/lib/cranelift/load-charts";
 import { analyzeLift } from "@/lib/cranelift/analysis";
+import { planTransfer } from "@/lib/cranelift/simulation";
 import { captureScene } from "@/lib/cranelift/capture";
 import type { AnalysisResult } from "@/lib/cranelift/types";
+import { useSim } from "./three/sim-store";
 
 /** اجرای تحلیل کامل + ثبت تصاویر. اگر جرثقیلی انتخاب نشده باشد null برمی‌گرداند. */
 export async function runAnalysis(): Promise<AnalysisResult | null> {
@@ -44,4 +46,27 @@ export async function runAnalysis(): Promise<AnalysisResult | null> {
   }
 
   return result;
+}
+
+/**
+ * شروع شبیه‌سازی حرکت دوپرچمی: تحلیل هر دو نقطه + ثبت نتیجه + اجرای انیمیشن.
+ * خروجی: "started" | "no-flags" | "no-crane"
+ * (گیت Pro و toast مربوطه با فراخواننده است.)
+ */
+export function startTransferSim(): "started" | "no-flags" | "no-crane" {
+  const s = useLiftStore.getState();
+  const crane = getCraneById(s.selectedCraneId, s.customCranes);
+  if (!crane) return "no-crane";
+  if (!s.pickPoint || !s.placePoint) return "no-flags";
+
+  const chart = getChartFor(crane.id, s.customCharts);
+  const transfer = planTransfer(crane, chart, s.inputs, s.pickPoint, s.placePoint);
+  useLiftStore.setState({ transfer });
+  useSim.getState().start();
+  return "started";
+}
+
+/** توقف/بازنشانی شبیه‌سازی */
+export function stopTransferSim() {
+  useSim.getState().reset();
 }

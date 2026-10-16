@@ -257,3 +257,25 @@ Work Log:
 
 Stage Summary:
 - eslint clean, tsc clean (app code), dev.log clean (only benign THREE deprecation warnings)
+
+---
+Task ID: 9
+Agent: main coordinator
+Task: سیم بکسل (parts of line + standalone calculator) + freemium licensing + دوپرچمی 3D transfer simulation + PDF integration
+
+Work Log:
+- types.ts: RopeCore/RopeConstruction, LiftInputs.{partsOfLine, ropeOverrideMblT, pickHeightM, placeHeightM}, CraneSpecs optional rope fields, AnalysisResult rope fields (partsOfLine/ropeLimitedCapacityT/linePullPerPartT/ropeSWLT/ropeUtilizationPct), TransferPointResult/TransferIssue/TransferResult, ReportData.{transfer, planType}
+- NEW wire-rope.ts: MBL coefficients per construction (6x19/6x36/8x19/8x36) × core (FC/IWRC) × grade (1960/2160), ropeMBLT/ropeSWLT/minDiameterMm, STANDARD_DIAMETERS, CRANE_ROPE_SPECS for all 13 preset cranes, ropeSpecOf(crane) resolver (table → specs → capacity-based estimate), effectiveRope(crane, inputs) applying calculator override (HOIST_SF=5)
+- NEW licensing.ts: free/pro plans, FREE_LIMITS {analysis:5/day, rope:5/day, pdf:1/day}, PRO_DEMO_CODES, quotaCheck/consumeQuota (local-date counters), PLANS info cards
+- NEW simulation.ts: planTransfer (analyzeLift at A pick + B place with per-point requiredHookHeight = ground+loadH, worst-case status, issues with FIX_BY_CODE remedies), buildTimeline/sampleTimeline/finalPoseOf/staticPoseOf (9-phase keyframes: ALIGN_A→LOWER_A→ATTACH→HOIST→SLEW_B→BOOM_B→LOWER_B→RELEASE, hook clamped to boom tip, smoothstep easing, slew shortest-arc)
+- analysis.ts: rope-limited capacity = min(chart/SF, parts×SWL), new check row + ROPE_LINE_PULL/ROPE_NEAR/ROPE_LIMITED warnings, result fields
+- store.ts: DEFAULT_INPUTS +4 fields, pickPoint/placePoint/setPickPoint(syncs radiusM)/setPlacePoint/clearFlags, license/activate/deactivate, usage/consume, transfer/setTransfer, hydrate merge for legacy persisted state
+- CraneScene.tsx: clickable Ground (drag-guard >6px), FlagMarker A(amber)/B(emerald) + RadiusRing, GroundLoad (load rests at A pre-sim / B post-sim), HookAndLoad.attached gating slings/load, SimDriver useFrame player (30Hz pose push, key rebuilt on transfer.checkedAt), CameraRig.frozen during sim, pose-driven slew/boom/hook/trolley
+- three/sim-store.ts (active/speed×1/2/4/pose/showVerdict) + view3d flagMode; ui-store (ropeOpen/upgradeOpen)
+- NEW RopeCalculatorDialog (2 modes: rope→MBL+SWL table 5..8:1 | load+parts+SF→min standard dia, apply-to-plan + reset-to-default), NEW UpgradeDialog (3 plan cards + activation with clickable demo codes), NEW TransferVerdictCard (per-point status/boom/radius + issues with راهکار) used in Step4+Step5
+- ScenePanel: quota-gated Play, auto-starts transfer sim when both flags set (Pro), phase HUD + progress; Step4Scene: flags card (A/B toggle, coordinates chips, pick/place heights, sim button + speed + stop + clear, live telemetry, verdict card); Step3Inputs: rope card (parts Select 1..max, rope chip, live line-pull/SWL/util, opens calculator); Step5Analysis: rope KPI card + transfer card; Step6Report: passes transfer+planType, PDF quota gate; Step1Crane fitInputsToCrane sets partsOfLine=max+ropeOverride=null; CustomCraneDialog: rope section (maxParts/dia/MBL auto-estimate/core); CraneLiftApp: سیم بکسل + ارتقا/Pro header tiles, dialogs mounted
+- pdf.ts: rope rows in inputs+results, pick/place height rows, NEW section «۷. شبیه‌سازی جابجایی دوعرچه‌ای» (verdict banner + per-point table + issues with fixes), renumbered ۸/۹/۱۰, FREE watermark (3 diagonal stamps) when planType=free
+- Fixed: ropeSpecOf initially ignored CRANE_ROPE_SPECS (estimate path hit for presets); Step3Inputs useMemo → plain computes (react-hooks/preserve-manual-memoization)
+
+Stage Summary:
+- E2E verified (agent-browser): rope card shows 10 falls for LTM1090; calculator applied 14mm×4 override; flags A(5.1,-4.1 R6.5) B(-2.5,-27 R27.1) placed via canvas clicks; free user sim → upgrade dialog; CLP-PRO-2024-0007 activated (Pro فعال tile); sim ran to completion (پایان جابجایی — بار در B, Boom 33°, Hook 8.5m); verdict غیرمجاز correctly triggered by applied rope limit (line pull 2.67 > SWL 2.53) with point-tagged issues + fixes; Step5 rope card + transfer card; PDF downloaded (5 pages) with rope rows, rope check ✗, section ۷ transfer tables, renumbered ۸/۹/۱۰; mobile 390px OK; 0 console errors (only benign THREE deprecation warnings); tsc + eslint clean

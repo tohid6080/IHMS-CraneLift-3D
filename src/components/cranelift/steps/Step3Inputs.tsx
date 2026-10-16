@@ -17,6 +17,7 @@ import {
 } from "react";
 import {
   Activity,
+  Cable,
   Link2,
   Move3d,
   Package,
@@ -51,8 +52,10 @@ import { useToast } from "@/hooks/use-toast";
 import { solveGeometry } from "@/lib/cranelift/analysis";
 import { getCraneById } from "@/lib/cranelift/cranes";
 import { getChartFor } from "@/lib/cranelift/load-charts";
+import { effectiveRope, ropeSpecOf } from "@/lib/cranelift/wire-rope";
 import { useLiftStore } from "@/lib/cranelift/store";
 import type { GeometrySolution, LoadChartSection } from "@/lib/cranelift/types";
+import { useUiStore } from "../ui-store";
 import { cn } from "@/lib/utils";
 
 // ───────────────────────── ابزار کمکی ─────────────────────────
@@ -183,21 +186,27 @@ export default function Step3Inputs() {
 
   const customCranes = useLiftStore((s) => s.customCranes);
   const crane = getCraneById(selectedCraneId, customCranes);
+  const setRopeOpen = useUiStore((s) => s.setRopeOpen);
+
+  // ── سیم بکسل و قرقره (محاسبه زنده) ──
+  const ropeSpec = crane ? ropeSpecOf(crane) : null;
+  const rope = crane ? effectiveRope(crane, inputs) : null;
+  const grossForRope =
+    inputs.loadWeightT + inputs.hookBlockWeightT + inputs.riggingWeightT;
+  const linePull = rope ? grossForRope / rope.parts : 0;
+  const ropeUtil: number =
+    rope && rope.swlT > 0 ? (linePull / rope.swlT) * 100 : 0;
 
   // ── هندسه زنده بوم ──
-  const geo = useMemo<GeometrySolution | null>(
-    () => (crane ? solveGeometry(crane, inputs) : null),
-    [crane, inputs]
-  );
+  const geo: GeometrySolution | null = crane
+    ? solveGeometry(crane, inputs)
+    : null;
 
   // ── سکشن‌های لودچارت (برای دکمه‌های انتخاب سریع طول بوم/جیب) ──
-  const chartSections = useMemo<LoadChartSection[]>(() => {
-    if (!crane) return [];
-    const chart = getChartFor(crane.id, customCharts);
-    return chart
-      ? [...chart.sections].sort((a, b) => a.boomLengthM - b.boomLengthM)
-      : [];
-  }, [crane, customCharts]);
+  const activeChart = crane ? getChartFor(crane.id, customCharts) : null;
+  const chartSections: LoadChartSection[] = activeChart
+    ? [...activeChart.sections].sort((a, b) => a.boomLengthM - b.boomLengthM)
+    : [];
 
   // ── واحد وزن (تن/کیلوگرم) + پیش‌نویس تایپ ──
   const [weightUnit, setWeightUnit] = useState<"t" | "kg">("t");
@@ -591,6 +600,104 @@ export default function Step3Inputs() {
                 className="data-[state=checked]:bg-amber-500"
               />
             </div>
+          </CardContent>
+        </Card>
+
+        {/* ── کارت ۲-۲: سیم بکسل و قرقره ── */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Cable className="size-5 text-amber-500" aria-hidden="true" />
+              سیم بکسل و تعداد رشته قلاب (قرقره)
+            </CardTitle>
+            <CardDescription>
+              تعداد رشته‌های سیم بکسل ظرفیت قلاب را محدود می‌کند؛ در تحلیل و گزارش اعمال می‌شود.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {crane && ropeSpec && rope ? (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="parts-of-line">تعداد رشته در قلاب</Label>
+                    <Select
+                      value={String(Math.min(inputs.partsOfLine > 0 ? inputs.partsOfLine : ropeSpec.maxPartsOfLine, ropeSpec.maxPartsOfLine))}
+                      onValueChange={(v) => setInputs({ partsOfLine: Number(v) })}
+                    >
+                      <SelectTrigger id="parts-of-line" dir="ltr">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-60 scroll-slim">
+                        {Array.from({ length: ropeSpec.maxPartsOfLine }, (_, i) => i + 1)
+                          .reverse()
+                          .map((n) => (
+                            <SelectItem key={n} value={String(n)}>
+                              {n} رشته
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      حداکثر این جرثقیل: <span dir="ltr">{ropeSpec.maxPartsOfLine}</span> رشته
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>سیم بکسل وینچ</Label>
+                    <div className="flex h-10 items-center justify-between rounded-md border bg-muted/30 px-3 text-sm" dir="ltr">
+                      <span className="font-bold">{rope.diameterMm}mm {rope.core}</span>
+                      <span className="text-xs text-muted-foreground">
+                        MBL {rope.mblT.toFixed(1)}t
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {rope.overridden ? "از محاسبه‌گر سیم بکسل" : "پیش‌فرض سازنده (قابل تغییر با محاسبه‌گر)"}
+                    </p>
+                  </div>
+                </div>
+
+                {/* محاسبه زنده کشش هر رشته */}
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-lg border bg-muted/40 px-2 py-2">
+                    <div className="text-[11px] text-muted-foreground">کشش هر رشته</div>
+                    <div className="text-sm font-bold" dir="ltr">
+                      {linePull.toFixed(2)} t
+                    </div>
+                  </div>
+                  <div className="rounded-lg border bg-muted/40 px-2 py-2">
+                    <div className="text-[11px] text-muted-foreground">SWL هر رشته (MBL÷۵)</div>
+                    <div className="text-sm font-bold text-green-600" dir="ltr">
+                      {rope.swlT.toFixed(2)} t
+                    </div>
+                  </div>
+                  <div className="rounded-lg border px-2 py-2" style={{ borderColor: ropeUtil > 100 ? "#ef4444" : ropeUtil >= 85 ? "#eab308" : undefined }}>
+                    <div className="text-[11px] text-muted-foreground">استفاده از سیم</div>
+                    <div
+                      className="text-sm font-bold"
+                      style={{ color: ropeUtil > 100 ? "#ef4444" : ropeUtil >= 85 ? "#eab308" : "#22c55e" }}
+                      dir="ltr"
+                    >
+                      {ropeUtil != null ? `${ropeUtil.toFixed(0)}%` : "—"}
+                    </div>
+                  </div>
+                </div>
+                {ropeUtil > 100 && (
+                  <p className="text-xs font-medium text-red-600">
+                    کشش هر رشته از ظرفیت کاری سیم بیشتر است — رشته‌ها را بیشتر کنید یا سیم قوی‌تر ببندید.
+                  </p>
+                )}
+
+                <Button
+                  variant="outline"
+                  className="w-full gap-2"
+                  onClick={() => setRopeOpen(true)}
+                >
+                  <Cable className="size-4 text-amber-500" />
+                  محاسبه‌گر تناژ سیم بکسل (مغزکنفی / مغزفولادی)
+                </Button>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">ابتدا جرثقیل انتخاب کنید.</p>
+            )}
           </CardContent>
         </Card>
 

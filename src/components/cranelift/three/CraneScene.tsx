@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useMemo, useRef } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Edges, Grid, Line, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { useLiftStore } from "@/lib/cranelift/store";
@@ -19,6 +19,16 @@ import { getCraneById } from "@/lib/cranelift/cranes";
 import { solveGeometry, STATUS_COLORS, HOOK_BLOCK_HEIGHT_M } from "@/lib/cranelift/analysis";
 import { sceneCapture } from "@/lib/cranelift/capture";
 import { useView3D } from "./view3d-store";
+import { useSim } from "./sim-store";
+import {
+  buildTimeline,
+  finalPoseOf,
+  sampleTimeline,
+  slewDegFor,
+  staticPoseOf,
+  type SegPose,
+  type SimPose,
+} from "@/lib/cranelift/simulation";
 import type { Crane, LiftInputs } from "@/lib/cranelift/types";
 
 const D2R = Math.PI / 180;
@@ -104,7 +114,7 @@ function CaptureRegister() {
 }
 
 // ───────────────────────── دوربین هوشمند ─────────────────────────
-function CameraRig({ radius, height }: { radius: number; height: number }) {
+function CameraRig({ radius, height, frozen }: { radius: number; height: number; frozen: boolean }) {
   const controls = useThree((s) => s.controls) as unknown as {
     target: THREE.Vector3;
     object: THREE.PerspectiveCamera;
@@ -113,7 +123,7 @@ function CameraRig({ radius, height }: { radius: number; height: number }) {
   const lastFit = useRef({ radius: 0, height: 0 });
 
   useEffect(() => {
-    if (!controls) return;
+    if (!controls || frozen) return;
     const first = lastFit.current.radius === 0;
     const dr = Math.abs(radius - lastFit.current.radius);
     const dh = Math.abs(height - lastFit.current.height);
@@ -125,19 +135,47 @@ function CameraRig({ radius, height }: { radius: number; height: number }) {
       controls.object.position.set(dist * 0.82, Math.max(11, height * 0.6 + 7), dist * 0.82);
       controls.update();
     }
-  }, [controls, radius, height]);
+  }, [controls, radius, height, frozen]);
   return null;
 }
 
 // ───────────────────────── جزئیات مشترک ─────────────────────────
 
-/** زمین + گرید */
-function Ground() {
+/** زمین + گرید — با کلیک‌گذاری پرچم روی زمین */
+function Ground({
+  flagMode,
+  onGroundClick,
+}: {
+  flagMode: "off" | "pick" | "place";
+  onGroundClick?: (x: number, z: number) => void;
+}) {
+  const downRef = useRef<{ x: number; y: number } | null>(null);
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0, 0]}
+        receiveShadow
+        onPointerDown={(e) => {
+          downRef.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY };
+        }}
+        onClick={(e) => {
+          // پرچم فقط با کلیک واقعی (بدون درگ چرخش دوربین) ثبت می‌شود
+          if (flagMode === "off" || !onGroundClick) return;
+          const d = downRef.current;
+          downRef.current = null;
+          if (!d) return;
+          if (Math.hypot(e.nativeEvent.clientX - d.x, e.nativeEvent.clientY - d.y) > 6) return;
+          e.stopPropagation();
+          onGroundClick(e.point.x, e.point.z);
+        }}
+      >
         <planeGeometry args={[260, 260]} />
-        <meshStandardMaterial color="#262626" roughness={1} metalness={0} />
+        <meshStandardMaterial
+          color={flagMode === "pick" ? "#33280f" : flagMode === "place" ? "#0f2e22" : "#262626"}
+          roughness={1}
+          metalness={0}
+        />
       </mesh>
       <Grid
         position={[0, 0.02, 0]}
@@ -209,6 +247,150 @@ function ForceArrow({
       </mesh>
     </group>
   );
+}
+
+// ───────────────────────── پرچم نقاط برداشت/جایگذاری ─────────────────────────
+function FlagMarker({
+  x,
+  z,
+  label,
+  color,
+  showLabels,
+}: {
+  x: number;
+  z: number;
+  label: string;
+  color: string;
+  showLabels: boolean;
+}) {
+  return (
+    <group position={[x, 0, z]}>
+      {/* میله پرچم */}
+      <mesh position={[0, 1.1, 0]} castShadow>
+        <cylinderGeometry args={[0.05, 0.05, 2.2, 8]} />
+        <meshStandardMaterial color="#e5e5e5" metalness={0.6} roughness={0.3} />
+      </mesh>
+      {/* پارچه پرچم */}
+      <mesh position={[0.42, 1.95, 0]} rotation={[0, 0, -Math.PI / 2]} castShadow>
+        <coneGeometry args={[0.42, 0.85, 4]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.25} />
+      </mesh>
+      {/* پایه */}
+      <mesh position={[0, 0.05, 0]}>
+        <cylinderGeometry args={[0.28, 0.34, 0.1, 12]} />
+        <meshStandardMaterial color="#52525b" metalness={0.5} roughness={0.5} />
+      </mesh>
+      {showLabels && (
+        <Label3D
+          position={[0, 2.9, 0]}
+          text={label}
+          color="#111111"
+          bg={color}
+          height={1.1}
+        />
+      )}
+    </group>
+  );
+}
+
+/** حلقه شعاع یک نقطه روی زمین */
+function RadiusRing({ radiusM, color }: { radiusM: number; color: string }) {
+  const ring = useMemo(() => {
+    const pts: [number, number, number][] = [];
+    for (let i = 0; i <= 72; i++) {
+      const a = (i / 72) * Math.PI * 2;
+      pts.push([Math.cos(a) * radiusM, 0.05, Math.sin(a) * radiusM]);
+    }
+    return pts;
+  }, [radiusM]);
+  return (
+    <Line points={ring} color={color} lineWidth={1.4} dashed dashSize={0.7} gapSize={0.45} transparent opacity={0.65} />
+  );
+}
+
+/** بار روی زمین (قبل از برداشت در A یا بعد از جایگذاری در B) */
+function GroundLoad({
+  x,
+  z,
+  groundY,
+  inputs,
+  color,
+  showLabels,
+  grossT,
+}: {
+  x: number;
+  z: number;
+  groundY: number;
+  inputs: LiftInputs;
+  color: string;
+  showLabels: boolean;
+  grossT: number;
+}) {
+  const { loadDims: dims } = inputs;
+  const centerY = groundY + dims.heightM / 2;
+  return (
+    <group position={[x, 0, z]}>
+      <mesh position={[0, centerY, 0]} castShadow>
+        <boxGeometry args={[dims.lengthM, dims.heightM, dims.widthM]} />
+        <meshStandardMaterial color={color} metalness={0.25} roughness={0.55} transparent opacity={0.92} />
+        <Edges color="#ffffff" />
+      </mesh>
+      {showLabels && (
+        <Label3D
+          position={[0, centerY + dims.heightM / 2 + 0.9, 0]}
+          text={`W = ${grossT.toFixed(1)} t`}
+        />
+      )}
+    </group>
+  );
+}
+
+// ───────────────────────── موتور پخش انیمیشن جابجایی ─────────────────────────
+function SimDriver() {
+  const active = useSim((s) => s.active);
+  const speed = useSim((s) => s.speed);
+  const lastPush = useRef(0);
+  const local = useRef<{ t: number; key: string; tl: ReturnType<typeof buildTimeline> | null }>({
+    t: 0,
+    key: "",
+    tl: null,
+  });
+
+  useFrame((_, dt) => {
+    if (!active) return;
+    const s = useLiftStore.getState();
+    const simS = useSim.getState();
+    if (!s.pickPoint || !s.placePoint || !s.transfer) {
+      simS.reset();
+      return;
+    }
+    const crane = getCraneById(s.selectedCraneId, s.customCranes);
+    if (!crane) {
+      simS.reset();
+      return;
+    }
+    const key = `${crane.id}|${s.inputs.boomLengthM}|${s.transfer.checkedAt}|${s.pickPoint.x},${s.pickPoint.z}|${s.placePoint.x},${s.placePoint.z}`;
+    if (local.current.key !== key || !local.current.tl) {
+      const start = staticPoseOf(crane, s.inputs, s.pickPoint);
+      local.current.tl = buildTimeline(crane, s.inputs, s.transfer, start as SegPose);
+      local.current.t = 0;
+      local.current.key = key;
+    }
+    local.current.t += Math.min(dt, 0.12) * speed;
+    const pose = sampleTimeline(local.current.tl, local.current.t);
+    if (!pose) {
+      // پایان حرکت — پوز پایانی + نمایش کارت نتیجه
+      simS.finish(finalPoseOf(local.current.tl));
+      return;
+    }
+    const now = performance.now();
+    if (now - lastPush.current > 33) {
+      // ~۳۰Hz — روان و بدون فشار به React
+      lastPush.current = now;
+      simS.setPose(pose);
+    }
+  });
+  return null;
 }
 
 // ───────────────────────── جرثقیل سیار ─────────────────────────
@@ -479,6 +661,7 @@ function HookAndLoad({
   showLabels,
   showForces,
   grossT,
+  attached,
 }: {
   inputs: LiftInputs;
   hookX: number;
@@ -487,6 +670,7 @@ function HookAndLoad({
   showLabels: boolean;
   showForces: boolean;
   grossT: number;
+  attached: boolean;
 }) {
   const { loadDims: dims, rigging } = inputs;
   const blockY = hookTopY - HOOK_BLOCK_HEIGHT_M;
@@ -564,27 +748,30 @@ function HookAndLoad({
       </mesh>
 
       {/* تیر پخش‌کننده */}
-      {rigging.useSpreader && (
+      {rigging.useSpreader && attached && (
         <mesh position={[hookX, barY, 0]} castShadow>
           <boxGeometry args={[halfSpan * 2 + 0.9, 0.28, 0.28]} />
           <meshStandardMaterial color="#52525b" metalness={0.5} roughness={0.4} />
         </mesh>
       )}
 
-      {/* اسلینگ‌ها */}
-      {slingLines.map((pts, i) => (
-        <Line key={i} points={pts} color={slingColor} lineWidth={1.6} />
-      ))}
+      {/* اسلینگ‌ها — فقط وقتی بار قلاب شده */}
+      {attached &&
+        slingLines.map((pts, i) => (
+          <Line key={i} points={pts} color={slingColor} lineWidth={1.6} />
+        ))}
 
-      {/* بار — رنگ بر اساس وضعیت تحلیل */}
-      <mesh position={[hookX, loadCenterY, 0]} castShadow>
-        <boxGeometry args={[dims.lengthM, dims.heightM, dims.widthM]} />
-        <meshStandardMaterial color={statusColor} metalness={0.25} roughness={0.55} transparent opacity={0.92} />
-        <Edges color="#ffffff" />
-      </mesh>
+      {/* بار آویزان — رنگ بر اساس وضعیت تحلیل */}
+      {attached && (
+        <mesh position={[hookX, loadCenterY, 0]} castShadow>
+          <boxGeometry args={[dims.lengthM, dims.heightM, dims.widthM]} />
+          <meshStandardMaterial color={statusColor} metalness={0.25} roughness={0.55} transparent opacity={0.92} />
+          <Edges color="#ffffff" />
+        </mesh>
+      )}
 
       {/* خطوط نیرو */}
-      {showForces && (
+      {showForces && attached && (
         <group>
           {/* وزن بار (به پایین) */}
           <ForceArrow origin={[hookX, loadCenterY + dims.heightM / 2 - 0.1, 0]} length={liftLen} color="#ef4444" dir={-1} />
@@ -594,7 +781,7 @@ function HookAndLoad({
       )}
 
       {/* برچسب‌ها */}
-      {showLabels && (
+      {showLabels && attached && (
         <>
           <Label3D position={[hookX, loadCenterY, 0]} text={`W = ${grossT.toFixed(1)} t`} />
           <Label3D
@@ -615,40 +802,93 @@ function SceneContent() {
   const inputs = useLiftStore((s) => s.inputs);
   const result = useLiftStore((s) => s.result);
   const view = useView3D();
+  const pick = useLiftStore((s) => s.pickPoint);
+  const place = useLiftStore((s) => s.placePoint);
+  const simActive = useSim((s) => s.active);
+  const simPose = useSim((s) => s.pose);
 
   const customCranes = useLiftStore((s) => s.customCranes);
   const crane = getCraneById(selectedId, customCranes);
-  const geo = useMemo(() => (crane ? solveGeometry(crane, inputs) : null), [crane, inputs]);
 
-  const statusColor = result ? STATUS_COLORS[result.status] : "#a1a1aa";
+  // وقتی پرچم A ثبت شده و شبیه‌سازی اجرا نمی‌شود، جرثقیل رو به نقطه برداشت می‌ایستد
+  const effInputs = useMemo(() => {
+    if (pick && !simActive && !simPose) {
+      return {
+        ...inputs,
+        radiusMode: "radius" as const,
+        radiusM: Math.hypot(pick.x, pick.z),
+        slewAngleDeg: slewDegFor(pick.x, pick.z),
+      };
+    }
+    return inputs;
+  }, [pick, inputs, simActive, simPose]);
+
+  const geo = useMemo(() => (crane ? solveGeometry(crane, effInputs) : null), [crane, effInputs]);
+
+  const pose: SimPose | null = simActive || simPose ? simPose : null;
   const grossT = inputs.loadWeightT + inputs.hookBlockWeightT + inputs.riggingWeightT;
+
+  // رنگ بار: حین شبیه‌سازی رنگ نقطه فعال، در غیر این صورت رنگ نتیجه تحلیل
+  const statusColor = pose
+    ? pose.statusColor
+    : result
+      ? STATUS_COLORS[result.status]
+      : "#a1a1aa";
 
   if (!crane || !geo) return null;
 
   const isTower = crane.type === "tower";
-  const slewRad = -inputs.slewAngleDeg * D2R;
   const slopeRad = inputs.groundSlopeDeg * D2R;
 
-  // هندسه قلاب (حتی با خطای هندسی، برای رندر fallback داریم)
-  const boomLen = inputs.boomLengthM;
-  const jibH = inputs.useJib ? inputs.jibLengthM * Math.cos(inputs.jibAngleDeg * D2R) : 0;
-  const jibV = inputs.useJib ? inputs.jibLengthM * Math.sin(inputs.jibAngleDeg * D2R) : 0;
-  const fbAngle = geo.ok && !isTower ? geo.boomAngleDeg : inputs.boomAngleDeg;
-  const hookX = isTower ? geo.radiusM : crane.specs.pivotOffsetM + boomLen * Math.cos(fbAngle * D2R) + jibH;
-  const hookY = isTower
-    ? (crane.specs.freestandingHookHeightM ?? 50)
-    : crane.specs.pivotHeightM + boomLen * Math.sin(fbAngle * D2R) + jibV;
+  // هندسه قلاب — حین شبیه‌سازی از پوز زنده، وگرنه از هندسه ایستا
+  const boomLen = effInputs.boomLengthM;
+  const jibH = effInputs.useJib ? effInputs.jibLengthM * Math.cos(effInputs.jibAngleDeg * D2R) : 0;
+  const jibV = effInputs.useJib ? effInputs.jibLengthM * Math.sin(effInputs.jibAngleDeg * D2R) : 0;
+  const fbAngle = pose ? pose.boomDeg : geo.ok && !isTower ? geo.boomAngleDeg : effInputs.boomAngleDeg;
+  const slewRad = pose ? -pose.slewDeg * D2R : -effInputs.slewAngleDeg * D2R;
+  const hookX = pose ? pose.hookX : isTower ? geo.radiusM : crane.specs.pivotOffsetM + boomLen * Math.cos(fbAngle * D2R) + jibH;
+  const hookY = pose
+    ? pose.hookTopY
+    : isTower
+      ? (crane.specs.freestandingHookHeightM ?? 50)
+      : crane.specs.pivotHeightM + boomLen * Math.sin(fbAngle * D2R) + jibV;
 
-  const exRadius = Math.max(geo.tipRadiusM || hookX, inputs.boomLengthM) + 3;
+  // اتصال بار: حین شبیه‌سازی طبق پوز؛ با پرچم A بار روی زمین است؛ بدون پرچم آویزان از قلاب
+  const attached = pose ? pose.attached : !pick || simActive;
+  // بار روی زمین در کدام نقطه است؟
+  const loadGround: "A" | "B" | null = pose
+    ? pose.loadGround
+    : pick && !simActive
+      ? "A"
+      : null;
+
+  const exRadius = Math.max(geo.tipRadiusM || hookX, effInputs.boomLengthM) + 3;
+  const radiusDisp = pose ? pose.radiusM : geo.radiusM;
 
   // مختصات جهانی بار برای خط شعاع
   const loadWorldX = Math.cos(-slewRad) * hookX;
   const loadWorldZ = Math.sin(-slewRad) * hookX;
 
+  const handleGroundClick = (x: number, z: number) => {
+    const st = useLiftStore.getState();
+    const vw = useView3D.getState();
+    const p = { x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10 };
+    if (vw.flagMode === "pick") {
+      st.setPickPoint(p);
+      // اگر B هنوز ثبت نشده، حالت بعدی = پرچم B
+      const placeExisting = useLiftStore.getState().placePoint;
+      vw.setFlagMode(placeExisting ? "off" : "place");
+    } else if (vw.flagMode === "place") {
+      st.setPlacePoint(p);
+      vw.setFlagMode("off");
+    }
+  };
+
   return (
     <>
       <CaptureRegister />
-      <CameraRig radius={hookX} height={hookY} />
+      <SimDriver />
+      <CameraRig radius={hookX} height={hookY} frozen={simActive} />
       <color attach="background" args={["#18181b"]} />
       <fog attach="fog" args={["#18181b", 100, 280]} />
       <hemisphereLight args={["#e7e5e4", "#1c1917", 0.55]} />
@@ -669,8 +909,44 @@ function SceneContent() {
 
       {/* دنیای شیب‌دار (زمین + جرثقیل + بار) */}
       <group rotation={[0, 0, slopeRad]}>
-        <Ground />
+        <Ground flagMode={view.flagMode} onGroundClick={handleGroundClick} />
         {view.exclusion && <ExclusionZone radiusM={exRadius} />}
+
+        {/* حلقه شعاع و پرچم نقطه A (برداشت) */}
+        {pick && view.radiusLine && <RadiusRing radiusM={Math.hypot(pick.x, pick.z)} color="#f59e0b" />}
+        {pick && (
+          <FlagMarker x={pick.x} z={pick.z} label="A — برداشت" color="#f59e0b" showLabels={view.labels} />
+        )}
+
+        {/* حلقه شعاع و پرچم نقطه B (جایگذاری) */}
+        {place && view.radiusLine && <RadiusRing radiusM={Math.hypot(place.x, place.z)} color="#10b981" />}
+        {place && (
+          <FlagMarker x={place.x} z={place.z} label="B — جایگذاری" color="#10b981" showLabels={view.labels} />
+        )}
+
+        {/* بار روی زمین (قبل از برداشت یا بعد از جایگذاری) */}
+        {loadGround === "A" && pick && (
+          <GroundLoad
+            x={pick.x}
+            z={pick.z}
+            groundY={inputs.pickHeightM}
+            inputs={inputs}
+            color={statusColor}
+            showLabels={view.labels}
+            grossT={grossT}
+          />
+        )}
+        {loadGround === "B" && place && (
+          <GroundLoad
+            x={place.x}
+            z={place.z}
+            groundY={inputs.placeHeightM}
+            inputs={inputs}
+            color={statusColor}
+            showLabels={view.labels}
+            grossT={grossT}
+          />
+        )}
 
         {/* خط شعاع کاری روی زمین */}
         {view.radiusLine && (
@@ -686,7 +962,7 @@ function SceneContent() {
             {view.labels && (
               <Label3D
                 position={[loadWorldX / 2, 0.8, loadWorldZ / 2]}
-                text={`R = ${geo.radiusM.toFixed(1)} m`}
+                text={`R = ${radiusDisp.toFixed(1)} m`}
                 color="#fbbf24"
                 bg="rgba(15,10,2,0.78)"
                 border="rgba(245,158,11,0.45)"
@@ -718,7 +994,7 @@ function SceneContent() {
             />
           )}
           {crane.type === "tower" && (
-            <TowerCrane specs={crane.specs} jibLengthM={boomLen} radiusM={geo.radiusM} />
+            <TowerCrane specs={crane.specs} jibLengthM={boomLen} radiusM={hookX} />
           )}
           <HookAndLoad
             inputs={inputs}
@@ -728,6 +1004,7 @@ function SceneContent() {
             showLabels={view.labels}
             showForces={view.forces}
             grossT={grossT}
+            attached={attached}
           />
         </group>
 

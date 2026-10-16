@@ -13,6 +13,7 @@
  */
 
 import { CRANE_TYPE_LABELS } from "./types";
+import { STATUS_LABELS } from "./analysis";
 import type {
   AnalysisResult,
   CheckLevel,
@@ -20,8 +21,10 @@ import type {
   LiftInputs,
   LoadChart,
   ReportData,
+  TransferResult,
   WarningLevel,
 } from "./types";
+import { effectiveRope } from "./wire-rope";
 
 // ───────────────────────── انواع محلی ─────────────────────────
 
@@ -373,6 +376,7 @@ function craneRows(crane: Crane): Array<[string, Cell]> {
 function inputRows(crane: Crane, inputs: LiftInputs): Array<[string, Cell]> {
   const gross =
     inputs.loadWeightT + inputs.hookBlockWeightT + inputs.riggingWeightT;
+  const rope = effectiveRope(crane, inputs);
   const rows: Array<[string, Cell]> = [
     kv("وزن بار", `${num(inputs.loadWeightT)} تن`),
     kv(
@@ -387,6 +391,24 @@ function inputRows(crane: Crane, inputs: LiftInputs): Array<[string, Cell]> {
     kv("تعداد اسلینگ", num(inputs.rigging.slingCount)),
     kv("زاویه اسلینگ از افق", `${num(inputs.rigging.slingAngleDeg)}°`),
     kv("تیر پخش‌کننده", inputs.rigging.useSpreader ? "بله" : "خیر"),
+    kv(
+      "تعداد رشته سیم بکسل (قرقره)",
+      `${rope.parts} رشته${
+        rope.overridden ? " — سیم از محاسبه‌گر" : " — سیم پیش‌فرض جرثقیل"
+      }`
+    ),
+    kv(
+      "مشخصات سیم بکسل وینچ",
+      `${num(rope.diameterMm)}mm ${
+        rope.core === "IWRC" ? "مغز فولادی (IWRC)" : "مغز کنفی (FC)"
+      } — MBL ${num(rope.mblT)} تن / SWL ${num(rope.swlT)} تن`
+    ),
+    kv(
+      "کشش هر رشته سیم",
+      `${num(gross / rope.parts)} تن (ظرفیت قلاب محدود به سیم: ${num(
+        rope.parts * rope.swlT
+      )} تن)`
+    ),
     kv("شعاع کاری", `${num(inputs.radiusM)} متر`),
     kv("طول بوم", `${num(inputs.boomLengthM)} متر`),
     kv(
@@ -400,6 +422,8 @@ function inputRows(crane: Crane, inputs: LiftInputs): Array<[string, Cell]> {
         : "بدون جیب"
     ),
     kv("ارتفاع قلاب مورد نیاز", `${num(inputs.requiredHookHeightM)} متر`),
+    kv("ارتفاع بار هنگام برداشت (A)", `${num(inputs.pickHeightM)} متر`),
+    kv("ارتفاع جایگذاری بار (B)", `${num(inputs.placeHeightM)} متر`),
     kv(
       "سرعت باد",
       `${num(inputs.windSpeedMs)} m/s${inputs.windGust ? " (تندباد)" : ""}`
@@ -494,8 +518,119 @@ function resultRows(result: AnalysisResult | null): Array<[string, Cell]> {
     kv("مارجین ارتفاع", hookMargin),
     kv("کشش هر اسلینگ", fmtNum(result?.slingTensionT, "تن")),
     kv("ضریب بار اسلینگ", fmtNum(result?.slingLoadFactorPct, "٪")),
+    kv("تعداد رشته در قلاب", result?.partsOfLine != null ? `${result.partsOfLine} رشته` : "—"),
+    kv("کشش هر رشته سیم", fmtNum(result?.linePullPerPartT, "تن", 2)),
+    kv("ظرفیت کاری هر رشته (MBL÷۵)", fmtNum(result?.ropeSWLT, "تن", 2)),
+    kv("ظرفیت قلاب محدود به سیم بکسل", fmtNum(result?.ropeLimitedCapacityT, "تن")),
     kv("نسبت باد به حد مجاز", fmtNum(result?.windRatioPct, "٪")),
   ];
+}
+
+/** و) بلوک «۷. شبیه‌سازی جابجایی دوعرشه‌ای» — جدول دو نقطه + ایرادها و راهکار */
+function transferBlock(transfer: TransferResult): HTMLElement {
+  const wrap = el("div", {});
+  wrap.appendChild(h2("۷. شبیه‌سازی جابجایی دوپرچمی (A → B)"));
+
+  // بنر وضعیت کل
+  wrap.appendChild(
+    el(
+      "div",
+      {
+        background: BANNER_BG[transfer.status],
+        color: "#ffffff",
+        borderRadius: "8px",
+        padding: "10px 16px",
+        marginTop: "4px",
+      },
+      el(
+        "div",
+        { fontWeight: "700", fontSize: "13.5px" },
+        `نتیجه جابجایی: ${STATUS_LABELS[transfer.status]}`
+      ),
+      el(
+        "div",
+        { fontSize: "12px", lineHeight: "1.8", marginTop: "3px" },
+        transfer.conclusion
+      )
+    )
+  );
+
+  // جدول هر نقطه
+  const rows: Cell[][] = transfer.points.map((p) => {
+    const up = p.result.utilizationPct;
+    const util: Cell =
+      up !== null && up !== undefined && Number.isFinite(up)
+        ? {
+            text: `${up.toFixed(1)}٪`,
+            bold: true,
+            color: up > 100 ? "#dc2626" : up >= 80 ? "#b45309" : "#16a34a",
+          }
+        : "—";
+    return [
+      `${p.point} — ${p.title}`,
+      `${num(p.radiusM)} متر`,
+      p.boomAngleDeg != null ? `${num(p.boomAngleDeg)}°` : "—",
+      p.result.ratedCapacityT === null
+        ? "خارج از محدوده"
+        : `${num(p.result.ratedCapacityT)} تن`,
+      util,
+      STATUS_LABELS[p.result.status],
+    ];
+  });
+  wrap.appendChild(
+    table(
+      ["نقطه", "شعاع", "زاویه بوم", "ظرفیت مجاز", "استفاده از ظرفیت", "وضعیت"],
+      rows,
+      { centerCols: [1, 2, 3, 4, 5] }
+    )
+  );
+
+  // ایرادها + راهکار اصلاح
+  if (transfer.issues.length > 0) {
+    const list = el("div", { marginTop: "8px" });
+    for (const issue of transfer.issues) {
+      list.appendChild(
+        el(
+          "div",
+          { display: "flex", alignItems: "flex-start", marginBottom: "6px" },
+          el("span", {
+            display: "inline-block",
+            width: "9px",
+            height: "9px",
+            flexShrink: "0",
+            background: WARNING_COLORS[issue.level],
+            borderRadius: "2px",
+            marginTop: "8px",
+            marginLeft: "9px",
+          }),
+          el(
+            "div",
+            {},
+            el(
+              "div",
+              { color: "#1c1917", fontWeight: "600" },
+              issue.message
+            ),
+            el(
+              "div",
+              { color: "#57534e", fontSize: "11.5px" },
+              `راهکار اصلاح: ${issue.fix}`
+            )
+          )
+        )
+      );
+    }
+    wrap.appendChild(list);
+  } else {
+    wrap.appendChild(
+      el(
+        "div",
+        { color: "#57534e", marginTop: "6px" },
+        "هر دو نقطه بدون ایراد — جابجایی از نظر فنی مجاز است."
+      )
+    );
+  }
+  return wrap;
 }
 
 /** چ) بلوک «۵. جدول بررسی‌های ایمنی» با علامت ✓ / ⚠ / ✗ */
@@ -548,11 +683,11 @@ function warningsBlock(result: AnalysisResult | null): HTMLElement {
   return wrap;
 }
 
-/** خ) بلوک «۷. لودچارت استفاده‌شده» — بج + جدول نزدیک‌ترین سکشن به طول بوم */
+/** خ) بلوک «۸. لودچارت استفاده‌شده» — بج + جدول نزدیک‌ترین سکشن به طول بوم */
 function chartBlock(chart: LoadChart | null, boomLengthM: number): HTMLElement {
   const wrap = el("div", {});
   if (!chart || chart.sections.length === 0) {
-    wrap.appendChild(h2("۷. لودچارت استفاده‌شده"));
+    wrap.appendChild(h2("۸. لودچارت استفاده‌شده"));
     wrap.appendChild(
       el("div", { fontSize: "12px", color: "#78716c" }, "لودچارتی ثبت نشده")
     );
@@ -576,7 +711,7 @@ function chartBlock(chart: LoadChart | null, boomLengthM: number): HTMLElement {
     isCustom ? "سفارشی" : "مرجع"
   );
 
-  const title = h2("۷. لودچارت استفاده‌شده");
+  const title = h2("۸. لودچارت استفاده‌شده");
   title.appendChild(badge);
   wrap.appendChild(title);
 
@@ -609,7 +744,7 @@ function chartBlock(chart: LoadChart | null, boomLengthM: number): HTMLElement {
   return wrap;
 }
 
-/** د) بلوک «۸. توصیه‌های ایمنی» — چک‌لیست ثابت با پیشوند □ */
+/** د) بلوک «۹. توصیه‌های ایمنی» — چک‌لیست ثابت با پیشوند □ */
 function safetyTipsBlock(): HTMLElement {
   const wrap = el("div", {});
   for (const tip of SAFETY_TIPS) {
@@ -655,7 +790,7 @@ function signBox(title: string): HTMLElement {
   );
 }
 
-/** ذ) بلوک «۹. تأییدات» — دو کادر امضا کنار هم */
+/** ذ) بلوک «۱۰. تأییدات» — دو کادر امضا کنار هم */
 function signaturesBlock(): HTMLElement {
   return el(
     "div",
@@ -735,16 +870,48 @@ function buildReportElement(data: ReportData): HTMLDivElement {
   // ح) ۶. هشدارها
   root.appendChild(h2("۶. هشدارها"));
   root.appendChild(warningsBlock(data.result));
-  // خ) ۷. لودچارت استفاده‌شده
+  // و) ۷. شبیه‌سازی جابجایی دوعرچه‌ای (در صورت اجرا)
+  if (data.transfer) {
+    root.appendChild(transferBlock(data.transfer));
+  }
+  // خ) ۸. لودچارت استفاده‌شده
   root.appendChild(chartBlock(data.chart, data.inputs.boomLengthM));
-  // د) ۸. توصیه‌های ایمنی
-  root.appendChild(h2("۸. توصیه‌های ایمنی"));
+  // د) ۹. توصیه‌های ایمنی
+  root.appendChild(h2("۹. توصیه‌های ایمنی"));
   root.appendChild(safetyTipsBlock());
-  // ذ) ۹. تأییدات
-  root.appendChild(h2("۹. تأییدات"));
+  // ذ) ۱۰. تأییدات
+  root.appendChild(h2("۱۰. تأییدات"));
   root.appendChild(signaturesBlock());
   // ر) پانوشت
   root.appendChild(footerBlock());
+
+  // ── واترمارک نسخه رایگان ──
+  if (data.planType === "free") {
+    const wm = (topPct: number): HTMLElement => {
+      const w = el(
+        "div",
+        {
+          position: "absolute",
+          left: "50%",
+          top: `${topPct}%`,
+          transform: "translate(-50%, -50%) rotate(-24deg)",
+          fontSize: "44px",
+          fontWeight: "700",
+          color: "rgba(120, 113, 108, 0.13)",
+          whiteSpace: "nowrap",
+          pointerEvents: "none",
+          direction: "ltr",
+          letterSpacing: "3px",
+        },
+        "FREE VERSION — CraneLift Pro 3D"
+      );
+      return w;
+    };
+    root.style.position = "fixed"; // اطمینان از anchor مطلق
+    root.appendChild(wm(18));
+    root.appendChild(wm(52));
+    root.appendChild(wm(86));
+  }
 
   return root;
 }

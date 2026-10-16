@@ -1,0 +1,852 @@
+     1→/**
+     2→ * CraneLift Pro 3D — مولد گزارش PDF حرفه‌ای (فارسی، RTL)
+     3→ * -----------------------------------------------------------
+     4→ * تولید گزارش چندصفحه‌ای A4 در سمت کلاینت با html2canvas + jsPDF:
+     5→ *   ۱) ساخت یک عنصر DOM مخفی برای گزارش — فقط استایل inline با رنگ HEX
+     6→ *      (⚠️ هرگز از کلاس‌های Tailwind یا CSS variables استفاده نکنید؛
+     7→ *      html2canvas رنگ‌های oklch را نمی‌فهمد و خروجی خراب می‌شود)
+     8→ *   ۲) رندر کل گزارش به یک Canvas با scale: 2
+     9→ *   ۳) برش عمودی به صفحات A4 (۲۱۰×۲۹۷mm) و افزودن به jsPDF و ذخیره
+    10→ *
+    11→ * این ماژول در سطح بالا به window/document دسترسی ندارد (import امن است)،
+    12→ * اما توابع خروجی فقط باید در مرورگر (event handler کلاینت) صدا زده شوند.
+    13→ */
+    14→
+    15→import { CRANE_TYPE_LABELS } from "./types";
+    16→import type {
+    17→  AnalysisResult,
+    18→  CheckLevel,
+    19→  Crane,
+    20→  LiftInputs,
+    21→  LoadChart,
+    22→  ReportData,
+    23→  WarningLevel,
+    24→} from "./types";
+    25→
+    26→// ───────────────────────── انواع محلی ─────────────────────────
+    27→
+    28→/** سلول جدول: متن ساده یا متن با رنگ/بولد */
+    29→interface RichCell {
+    30→  text: string;
+    31→  color?: string;
+    32→  bold?: boolean;
+    33→}
+    34→
+    35→type Cell = string | RichCell;
+    36→
+    37→type StyleMap = Partial<CSSStyleDeclaration>;
+    38→
+    39→// ───────────────────────── ثابت‌ها ─────────────────────────
+    40→
+    41→/** عرض صفحه A4 بر حسب میلی‌متر */
+    42→const PAGE_W_MM = 210;
+    43→/** ارتفاع صفحه A4 بر حسب میلی‌متر */
+    44→const PAGE_H_MM = 297;
+    45→/** عرض پیکسلی بوم گزارش (A4 در ۹۶dpi) */
+    46→const REPORT_W_PX = 794;
+    47→/** ضریب رزولوشن رندر html2canvas */
+    48→const RENDER_SCALE = 2;
+    49→/** کیفیت JPEG صفحات PDF */
+    50→const JPEG_QUALITY = 0.92;
+    51→/** حداکثر تعداد نقاط نمایش‌داده‌شده در جدول لودچارت */
+    52→const MAX_CHART_POINTS = 16;
+    53→
+    54→/**
+    55→ * رنگ پس‌زمینه بنر نتیجه نهایی.
+    56→ * نسخه پرینت (تیره‌تر از STATUS_COLORS) برای کنتراست بهتر متن سفید روی کاغذ.
+    57→ */
+    58→const BANNER_BG: Record<AnalysisResult["status"], string> = {
+    59→  allowed: "#16a34a",
+    60→  caution: "#ca8a04",
+    61→  "not-allowed": "#dc2626",
+    62→};
+    63→
+    64→/** عنوان بنر نتیجه نهایی */
+    65→const BANNER_TITLE: Record<AnalysisResult["status"], string> = {
+    66→  allowed: "نتیجه نهایی: مجاز است",
+    67→  caution: "نتیجه نهایی: نیازمند بررسی بیشتر",
+    68→  "not-allowed": "نتیجه نهایی: غیرمجاز",
+    69→};
+    70→
+    71→/** علامت وضعیت هر ردیف جدول بررسی‌ها (کاراکترهای مطمئن برای html2canvas) */
+    72→const CHECK_MARKS: Record<CheckLevel, RichCell> = {
+    73→  pass: { text: "✓", color: "#16a34a", bold: true },
+    74→  warn: { text: "⚠", color: "#b45309", bold: true },
+    75→  fail: { text: "✗", color: "#dc2626", bold: true },
+    76→};
+    77→
+    78→/** رنگ مربع کنار هر هشدار بر اساس سطح */
+    79→const WARNING_COLORS: Record<WarningLevel, string> = {
+    80→  info: "#52525b",
+    81→  warning: "#ca8a04",
+    82→  danger: "#dc2626",
+    83→};
+    84→
+    85→/** توصیه‌های ثابت ایمنی لیفت (چک‌لیست چاپی) */
+    86→const SAFETY_TIPS: readonly string[] = [
+    87→  "کنترل ظرفیت تحمل زمین زیر اوت‌ریگرها/شنی‌ها و استفاده از تخته‌های توزیع بار",
+    88→  "پایش مستمر سرعت باد با بادسنج؛ توقف لیفت در صورت تندباد بالاتر از حد مجاز",
+    89→  "تراز بودن کامل جرثقیل پیش از لیفت (شیب بیش از حد مجاز ممنوع)",
+    90→  "بازرسی گواهی‌دار اسلینگ‌ها، شکل‌ها و بلاک قلاب پیش از هر شیفت",
+    91→  "تعیین و علامت‌گذاری منطقه ممنوعه (Exclusion Zone) و ممنوعیت عبور بار از روی پرسنل",
+    92→  "لیفت آزمایشی: جدا کردن بار چند سانتی‌متر از زمین، کنترل ترازی و توقف ۵ دقیقه‌ای",
+    93→  "رادیو-راهنما و دستور لیفت واحد توسط یک سرپرست لیفت دارای صلاحیت",
+    94→  "رعایت فاصله ایمن از خطوط برق و موانع (طبق جدول فاصله مجاز)",
+    95→];
+    96→
+    97→// ───────────────────────── قالب‌بندی اعداد و تاریخ ─────────────────────────
+    98→
+    99→/** عدد → رشته با حداکثر ۲ رقم اعشار (ورودی‌های کاربر) */
+   100→function num(v: number): string {
+   101→  return Number.isFinite(v) ? String(Math.round(v * 100) / 100) : "—";
+   102→}
+   103→
+   104→/** عدد اختیاری + واحد → سلول متنی؛ null/undefined → «—» */
+   105→function fmtNum(
+   106→  v: number | null | undefined,
+   107→  unit: string,
+   108→  digits = 1
+   109→): string {
+   110→  if (v === null || v === undefined || !Number.isFinite(v)) return "—";
+   111→  const s = v.toFixed(digits);
+   112→  return unit === "°" || unit === "٪" ? `${s}${unit}` : `${s} ${unit}`;
+   113→}
+   114→
+   115→/** تاریخ ISO → رشته شمسی؛ نامعتبر → «—» */
+   116→function formatDate(iso: string): string {
+   117→  const d = new Date(iso);
+   118→  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("fa-IR");
+   119→}
+   120→
+   121→// ───────────────────────── سازنده‌های DOM ─────────────────────────
+   122→
+   123→/** ساخت یک عنصر با استایل inline و فرزندان (متن یا نود) */
+   124→function el<K extends keyof HTMLElementTagNameMap>(
+   125→  tag: K,
+   126→  style: StyleMap,
+   127→  ...children: Array<Node | string | null | undefined>
+   128→): HTMLElementTagNameMap[K] {
+   129→  const node = document.createElement(tag);
+   130→  Object.assign(node.style, style);
+   131→  for (const child of children) {
+   132→    if (child === null || child === undefined) continue;
+   133→    node.appendChild(
+   134→      typeof child === "string" ? document.createTextNode(child) : child
+   135→    );
+   136→  }
+   137→  return node;
+   138→}
+   139→
+   140→/** سلول rich → نود (span رنگی/بولد یا text ساده) */
+   141→function richNode(cell: Cell): Node {
+   142→  if (typeof cell === "string") return document.createTextNode(cell);
+   143→  const span = document.createElement("span");
+   144→  span.style.color = cell.color ?? "#1c1917";
+   145→  if (cell.bold) span.style.fontWeight = "700";
+   146→  span.textContent = cell.text;
+   147→  return span;
+   148→}
+   149→
+   150→/** جفت برچسب/مقدار برای جدول‌های دوستونه */
+   151→function kv(label: string, value: Cell): [string, Cell] {
+   152→  return [label, value];
+   153→}
+   154→
+   155→/** تیتر بخش با نوار کهربایی سمت راست */
+   156→function h2(text: string): HTMLDivElement {
+   157→  return el(
+   158→    "div",
+   159→    {
+   160→      fontSize: "15px",
+   161→      fontWeight: "700",
+   162→      color: "#1c1917",
+   163→      borderRight: "4px solid #f59e0b",
+   164→      paddingRight: "10px",
+   165→      marginTop: "26px",
+   166→      marginBottom: "10px",
+   167→    },
+   168→    text
+   169→  );
+   170→}
+   171→
+   172→/** جدول عمومی با سرستون (اختیاراً ستون‌های وسط‌چین) */
+   173→function table(
+   174→  headers: string[],
+   175→  rows: Cell[][],
+   176→  opts?: { centerCols?: number[] }
+   177→): HTMLTableElement {
+   178→  const t = document.createElement("table");
+   179→  Object.assign(t.style, {
+   180→    width: "100%",
+   181→    borderCollapse: "collapse",
+   182→    fontSize: "12.5px",
+   183→    marginTop: "2px",
+   184→  });
+   185→
+   186→  const headRow = t.createTHead().insertRow();
+   187→  headers.forEach((header, i) => {
+   188→    const th = document.createElement("th");
+   189→    Object.assign(th.style, {
+   190→      border: "1px solid #e4e4e7",
+   191→      background: "#f5f5f4",
+   192→      color: "#44403c",
+   193→      fontWeight: "700",
+   194→      fontSize: "12px",
+   195→      padding: "7px 12px",
+   196→      textAlign: opts?.centerCols?.includes(i) ? "center" : "right",
+   197→    });
+   198→    th.textContent = header;
+   199→    headRow.appendChild(th);
+   200→  });
+   201→
+   202→  const body = t.createTBody();
+   203→  for (const row of rows) {
+   204→    const tr = body.insertRow();
+   205→    row.forEach((cell, i) => {
+   206→      const td = tr.insertCell();
+   207→      Object.assign(td.style, {
+   208→        border: "1px solid #e4e4e7",
+   209→        padding: "6px 12px",
+   210→        textAlign: opts?.centerCols?.includes(i) ? "center" : "right",
+   211→        verticalAlign: "top",
+   212→      });
+   213→      td.appendChild(richNode(cell));
+   214→    });
+   215→  }
+   216→  return t;
+   217→}
+   218→
+   219→/** جدول دوستونه برچسب/مقدار */
+   220→function kvTable(rows: Array<[string, Cell]>): HTMLTableElement {
+   221→  const t = document.createElement("table");
+   222→  Object.assign(t.style, {
+   223→    width: "100%",
+   224→    borderCollapse: "collapse",
+   225→    fontSize: "12.5px",
+   226→    marginTop: "2px",
+   227→  });
+   228→  const body = t.createTBody();
+   229→  for (const [label, value] of rows) {
+   230→    const tr = body.insertRow();
+   231→
+   232→    const tdLabel = tr.insertCell();
+   233→    Object.assign(tdLabel.style, {
+   234→      width: "32%",
+   235→      border: "1px solid #e4e4e7",
+   236→      background: "#fafaf9",
+   237→      color: "#57534e",
+   238→      fontWeight: "600",
+   239→      padding: "6px 12px",
+   240→      textAlign: "right",
+   241→      verticalAlign: "top",
+   242→    });
+   243→    tdLabel.textContent = label;
+   244→
+   245→    const tdValue = tr.insertCell();
+   246→    Object.assign(tdValue.style, {
+   247→      border: "1px solid #e4e4e7",
+   248→      padding: "6px 12px",
+   249→      textAlign: "right",
+   250→      verticalAlign: "top",
+   251→    });
+   252→    tdValue.appendChild(richNode(value));
+   253→  }
+   254→  return t;
+   255→}
+   256→
+   257→// ───────────────────────── بخش‌های گزارش ─────────────────────────
+   258→
+   259→/** الف) نوار سربرگ + شبکه متادیتای پروژه (بدون حاشیه) */
+   260→function headerBand(data: ReportData): HTMLElement {
+   261→  const band = el(
+   262→    "div",
+   263→    {
+   264→      background: "#f59e0b",
+   265→      color: "#1c1917",
+   266→      borderRadius: "12px",
+   267→      padding: "18px 24px",
+   268→      textAlign: "center",
+   269→    },
+   270→    el(
+   271→      "div",
+   272→      { fontSize: "20px", fontWeight: "700", lineHeight: "1.6" },
+   273→      "گزارش برنامه‌ریزی و تحلیل لیفت جرثقیل"
+   274→    ),
+   275→    el(
+   276→      "div",
+   277→      {
+   278→        fontSize: "12px",
+   279→        fontWeight: "600",
+   280→        color: "#44403c",
+   281→        marginTop: "2px",
+   282→        direction: "ltr",
+   283→      },
+   284→      "CraneLift Pro 3D — Lift Plan & Analysis Report"
+   285→    )
+   286→  );
+   287→
+   288→  const metaItem = (label: string, value: string): HTMLElement =>
+   289→    el(
+   290→      "div",
+   291→      { width: "50%", boxSizing: "border-box", padding: "3px 0", fontSize: "12.5px" },
+   292→      el("span", { fontWeight: "700", color: "#57534e" }, `${label}: `),
+   293→      el("span", { color: "#1c1917" }, value)
+   294→    );
+   295→
+   296→  const meta = el(
+   297→    "div",
+   298→    { display: "flex", flexWrap: "wrap", marginTop: "14px" },
+   299→    metaItem("کد پروژه", data.meta.projectId || "—"),
+   300→    metaItem("نام پروژه", data.meta.projectName || "—"),
+   301→    metaItem("محل پروژه", data.meta.location || "—"),
+   302→    metaItem("تاریخ", formatDate(data.meta.date)),
+   303→    metaItem("مهندس ناظر", data.meta.engineerName || "—"),
+   304→    metaItem("شرکت", data.meta.companyName || "—")
+   305→  );
+   306→
+   307→  return el("div", {}, band, meta);
+   308→}
+   309→
+   310→/** ب) بنر نتیجه نهایی (سبز/کهربایی/قرمز یا کهربایی اگر تحلیل نشده) */
+   311→function resultBanner(result: AnalysisResult | null): HTMLElement {
+   312→  if (!result) {
+   313→    return el(
+   314→      "div",
+   315→      {
+   316→        background: "#f59e0b",
+   317→        color: "#1c1917",
+   318→        fontWeight: "700",
+   319→        fontSize: "14px",
+   320→        borderRadius: "10px",
+   321→        padding: "14px 18px",
+   322→        marginTop: "16px",
+   323→      },
+   324→      "تحلیل اجرا نشده است"
+   325→    );
+   326→  }
+   327→  return el(
+   328→    "div",
+   329→    {
+   330→      background: BANNER_BG[result.status],
+   331→      color: "#ffffff",
+   332→      borderRadius: "10px",
+   333→      padding: "14px 18px",
+   334→      marginTop: "16px",
+   335→    },
+   336→    el(
+   337→      "div",
+   338→      { fontWeight: "700", fontSize: "15px" },
+   339→      BANNER_TITLE[result.status]
+   340→    ),
+   341→    el(
+   342→      "div",
+   343→      { fontSize: "12.5px", lineHeight: "1.8", marginTop: "4px" },
+   344→      result.conclusion
+   345→    )
+   346→  );
+   347→}
+   348→
+   349→/** پ) ردیف‌های «۱. مشخصات جرثقیل» */
+   350→function craneRows(crane: Crane): Array<[string, Cell]> {
+   351→  const s = crane.specs;
+   352→  return [
+   353→    kv("مدل", crane.name),
+   354→    kv("سازنده", crane.manufacturer),
+   355→    kv("نوع", CRANE_TYPE_LABELS[crane.type]),
+   356→    kv("ظرفیت اسمی", `${num(s.maxCapacityT)} تن`),
+   357→    kv("بوم اصلی", `${num(s.mainBoomMinM)} – ${num(s.mainBoomMaxM)} متر`),
+   358→    kv(
+   359→      "جیب",
+   360→      s.jibMaxM > 0
+   361→        ? `${num(s.jibMinM)} – ${num(s.jibMaxM)} متر`
+   362→        : "—"
+   363→    ),
+   364→    kv("وزن خود جرثقیل", `${num(s.selfWeightT)} تن`),
+   365→    kv("کانترویت", `${num(s.counterweightT)} تن`),
+   366→    kv("دهانه اوت‌ریگر / شنی", `${num(s.outriggerSpanM)} متر`),
+   367→    kv("حداکثر باد مجاز", `${num(s.windLimitMs)} m/s`),
+   368→    kv("شعاع کاری", `${num(s.minRadiusM)} – ${num(s.maxRadiusM)} متر`),
+   369→  ];
+   370→}
+   371→
+   372→/** ت) ردیف‌های «۲. خلاصه ورودی‌های لیفت» */
+   373→function inputRows(crane: Crane, inputs: LiftInputs): Array<[string, Cell]> {
+   374→  const gross =
+   375→    inputs.loadWeightT + inputs.hookBlockWeightT + inputs.riggingWeightT;
+   376→  const rows: Array<[string, Cell]> = [
+   377→    kv("وزن بار", `${num(inputs.loadWeightT)} تن`),
+   378→    kv(
+   379→      "ابعاد بار (طول×عرض×ارتفاع)",
+   380→      `${num(inputs.loadDims.lengthM)} × ${num(inputs.loadDims.widthM)} × ${num(
+   381→        inputs.loadDims.heightM
+   382→      )} متر`
+   383→    ),
+   384→    kv("وزن بلاک قلاب", `${num(inputs.hookBlockWeightT)} تن`),
+   385→    kv("وزن ریگینگ", `${num(inputs.riggingWeightT)} تن`),
+   386→    kv("بار کل", { text: `${num(gross)} تن`, color: "#b45309", bold: true }),
+   387→    kv("تعداد اسلینگ", num(inputs.rigging.slingCount)),
+   388→    kv("زاویه اسلینگ از افق", `${num(inputs.rigging.slingAngleDeg)}°`),
+   389→    kv("تیر پخش‌کننده", inputs.rigging.useSpreader ? "بله" : "خیر"),
+   390→    kv("شعاع کاری", `${num(inputs.radiusM)} متر`),
+   391→    kv("طول بوم", `${num(inputs.boomLengthM)} متر`),
+   392→    kv(
+   393→      "زاویه بوم",
+   394→      crane.type === "tower" ? "—" : `${num(inputs.boomAngleDeg)}°`
+   395→    ),
+   396→    kv(
+   397→      "جیب",
+   398→      inputs.useJib
+   399→        ? `${num(inputs.jibLengthM)} متر / ${num(inputs.jibAngleDeg)}°`
+   400→        : "بدون جیب"
+   401→    ),
+   402→    kv("ارتفاع قلاب مورد نیاز", `${num(inputs.requiredHookHeightM)} متر`),
+   403→    kv(
+   404→      "سرعت باد",
+   405→      `${num(inputs.windSpeedMs)} m/s${inputs.windGust ? " (تندباد)" : ""}`
+   406→    ),
+   407→    kv("شیب زمین", `${num(inputs.groundSlopeDeg)}°`),
+   408→    kv("ضریب ایمنی", `× ${num(inputs.safetyFactor)}`),
+   409→    kv("زاویه چرخش", `${num(inputs.slewAngleDeg)}°`),
+   410→  ];
+   411→  const notes = inputs.notes.trim();
+   412→  if (notes) rows.push(kv("یادداشت‌ها", notes));
+   413→  return rows;
+   414→}
+   415→
+   416→/** یک تصویر با کپشن */
+   417→function figure(src: string, caption: string): HTMLElement {
+   418→  const img = el("img", {
+   419→    width: "350px",
+   420→    height: "200px",
+   421→    objectFit: "contain",
+   422→    border: "1px solid #d4d4d8",
+   423→    borderRadius: "8px",
+   424→    background: "#fafaf9",
+   425→  });
+   426→  img.src = src;
+   427→  img.alt = caption;
+   428→  return el(
+   429→    "div",
+   430→    { textAlign: "center" },
+   431→    img,
+   432→    el(
+   433→      "div",
+   434→      { fontSize: "11.5px", color: "#57534e", marginTop: "4px" },
+   435→      caption
+   436→    )
+   437→  );
+   438→}
+   439→
+   440→/** ث) بلوک «۳. تصاویر» — فقط اگر دست‌کم یک تصویر موجود باشد */
+   441→function imagesBlock(data: ReportData): HTMLElement | null {
+   442→  const items: HTMLElement[] = [];
+   443→  if (data.screenshot3D) items.push(figure(data.screenshot3D, "نمای سه‌بعدی لیفت"));
+   444→  if (data.chartImage)
+   445→    items.push(figure(data.chartImage, "منحنی لودچارت (ظرفیت-شعاع)"));
+   446→  if (items.length === 0) return null;
+   447→  return el(
+   448→    "div",
+   449→    { display: "flex", flexWrap: "wrap", gap: "18px", marginTop: "4px" },
+   450→    ...items
+   451→  );
+   452→}
+   453→
+   454→/** ج) ردیف‌های «۴. نتایج تحلیل» — مقادیر null → «—» */
+   455→function resultRows(result: AnalysisResult | null): Array<[string, Cell]> {
+   456→  let utilization: Cell = "—";
+   457→  const up = result?.utilizationPct;
+   458→  if (up !== null && up !== undefined && Number.isFinite(up)) {
+   459→    utilization = {
+   460→      text: `${up.toFixed(1)}٪`,
+   461→      bold: true,
+   462→      color: up > 100 ? "#dc2626" : up >= 80 ? "#b45309" : "#16a34a",
+   463→    };
+   464→  }
+   465→
+   466→  let hookMargin: Cell = "—";
+   467→  const hm = result?.hookHeightMarginM;
+   468→  if (hm !== null && hm !== undefined && Number.isFinite(hm)) {
+   469→    hookMargin = {
+   470→      text: `${hm.toFixed(1)} متر`,
+   471→      color: hm < 0 ? "#dc2626" : "#1c1917",
+   472→    };
+   473→  }
+   474→
+   475→  const rated: Cell =
+   476→    result === null
+   477→      ? "—"
+   478→      : result.ratedCapacityT === null
+   479→      ? "خارج از محدوده"
+   480→      : `${result.ratedCapacityT.toFixed(1)} تن`;
+   481→
+   482→  return [
+   483→    kv("ظرفیت مجاز لودچارت", rated),
+   484→    kv("ظرفیت با مارجین ایمنی", fmtNum(result?.effectiveCapacityT, "تن")),
+   485→    kv("بار کل", fmtNum(result?.grossLoadT, "تن")),
+   486→    kv("درصد استفاده از ظرفیت", utilization),
+   487→    kv("گشتاور بار", fmtNum(result?.loadMomentTm, "t·m")),
+   488→    kv("گشتاور مجاز", fmtNum(result?.allowedMomentTm, "t·m")),
+   489→    kv("نسبت گشتاور", fmtNum(result?.momentRatioPct, "٪")),
+   490→    kv("زاویه بوم", fmtNum(result?.boomAngleDeg, "°")),
+   491→    kv("شعاع نوک بوم/جیب", fmtNum(result?.tipRadiusM, "متر")),
+   492→    kv("ارتفاع نوک", fmtNum(result?.tipHeightM, "متر")),
+   493→    kv("ارتفاع قابل استفاده قلاب", fmtNum(result?.availableHookHeightM, "متر")),
+   494→    kv("مارجین ارتفاع", hookMargin),
+   495→    kv("کشش هر اسلینگ", fmtNum(result?.slingTensionT, "تن")),
+   496→    kv("ضریب بار اسلینگ", fmtNum(result?.slingLoadFactorPct, "٪")),
+   497→    kv("نسبت باد به حد مجاز", fmtNum(result?.windRatioPct, "٪")),
+   498→  ];
+   499→}
+   500→
+   501→/** چ) بلوک «۵. جدول بررسی‌های ایمنی» با علامت ✓ / ⚠ / ✗ */
+   502→function checksBlock(result: AnalysisResult | null): HTMLElement {
+   503→  if (!result || result.checks.length === 0) {
+   504→    return el(
+   505→      "div",
+   506→      { fontSize: "12px", color: "#78716c" },
+   507→      "بررسی‌ای برای نمایش وجود ندارد (تحلیل اجرا نشده است)."
+   508→    );
+   509→  }
+   510→  return table(
+   511→    ["بررسی", "مقدار", "حد مجاز", "وضعیت"],
+   512→    result.checks.map(
+   513→      (c): Cell[] => [c.label, c.value, c.limit, CHECK_MARKS[c.level]]
+   514→    ),
+   515→    { centerCols: [3] }
+   516→  );
+   517→}
+   518→
+   519→/** ح) بلوک «۶. هشدارها» — مربع رنگی بر اساس سطح + پیام */
+   520→function warningsBlock(result: AnalysisResult | null): HTMLElement {
+   521→  const wrap = el("div", {});
+   522→  const list = result?.warnings ?? [];
+   523→  if (list.length === 0) {
+   524→    wrap.appendChild(
+   525→      el("div", { color: "#57534e" }, "هشدار خاصی ثبت نشد.")
+   526→    );
+   527→    return wrap;
+   528→  }
+   529→  for (const w of list) {
+   530→    wrap.appendChild(
+   531→      el(
+   532→        "div",
+   533→        { display: "flex", alignItems: "flex-start", marginBottom: "5px" },
+   534→        el("span", {
+   535→          display: "inline-block",
+   536→          width: "9px",
+   537→          height: "9px",
+   538→          flexShrink: "0",
+   539→          background: WARNING_COLORS[w.level],
+   540→          borderRadius: "2px",
+   541→          marginTop: "8px",
+   542→          marginLeft: "9px",
+   543→        }),
+   544→        el("span", { color: "#1c1917" }, w.message)
+   545→      )
+   546→    );
+   547→  }
+   548→  return wrap;
+   549→}
+   550→
+   551→/** خ) بلوک «۷. لودچارت استفاده‌شده» — بج + جدول نزدیک‌ترین سکشن به طول بوم */
+   552→function chartBlock(chart: LoadChart | null, boomLengthM: number): HTMLElement {
+   553→  const wrap = el("div", {});
+   554→  if (!chart || chart.sections.length === 0) {
+   555→    wrap.appendChild(h2("۷. لودچارت استفاده‌شده"));
+   556→    wrap.appendChild(
+   557→      el("div", { fontSize: "12px", color: "#78716c" }, "لودچارتی ثبت نشده")
+   558→    );
+   559→    return wrap;
+   560→  }
+   561→
+   562→  const isCustom = chart.source === "custom";
+   563→  const badge = el(
+   564→    "span",
+   565→    {
+   566→      display: "inline-block",
+   567→      padding: "1px 12px",
+   568→      borderRadius: "999px",
+   569→      fontSize: "11px",
+   570→      fontWeight: "700",
+   571→      marginRight: "8px",
+   572→      verticalAlign: "middle",
+   573→      background: isCustom ? "#f59e0b" : "#52525b",
+   574→      color: isCustom ? "#1c1917" : "#ffffff",
+   575→    },
+   576→    isCustom ? "سفارشی" : "مرجع"
+   577→  );
+   578→
+   579→  const title = h2("۷. لودچارت استفاده‌شده");
+   580→  title.appendChild(badge);
+   581→  wrap.appendChild(title);
+   582→
+   583→  // نزدیک‌ترین سکشن (طول بوم) به طول بوم لیفت فعلی
+   584→  let best = chart.sections[0];
+   585→  for (const section of chart.sections) {
+   586→    if (
+   587→      Math.abs(section.boomLengthM - boomLengthM) <
+   588→      Math.abs(best.boomLengthM - boomLengthM)
+   589→    ) {
+   590→      best = section;
+   591→    }
+   592→  }
+   593→
+   594→  const points = [...best.points].sort((a, b) => a.radiusM - b.radiusM);
+   595→  const shown = points.slice(0, MAX_CHART_POINTS);
+   596→  const rows: Cell[][] = shown.map((p) => [num(p.radiusM), num(p.capacityT)]);
+   597→  if (points.length > shown.length) rows.push(["...", "..."]);
+   598→
+   599→  wrap.appendChild(
+   600→    el(
+   601→      "div",
+   602→      { fontSize: "11.5px", color: "#57534e", marginBottom: "6px" },
+   603→      `سکشن انتخاب‌شده: طول بوم ${num(best.boomLengthM)} متر (${points.length} نقطه)`
+   604→    )
+   605→  );
+   606→  wrap.appendChild(
+   607→    table(["شعاع (م)", "ظرفیت مجاز (تن)"], rows, { centerCols: [0, 1] })
+   608→  );
+   609→  return wrap;
+   610→}
+   611→
+   612→/** د) بلوک «۸. توصیه‌های ایمنی» — چک‌لیست ثابت با پیشوند □ */
+   613→function safetyTipsBlock(): HTMLElement {
+   614→  const wrap = el("div", {});
+   615→  for (const tip of SAFETY_TIPS) {
+   616→    wrap.appendChild(
+   617→      el(
+   618→        "div",
+   619→        { display: "flex", alignItems: "flex-start", marginBottom: "4px" },
+   620→        el("span", { color: "#b45309", fontWeight: "700", marginLeft: "8px" }, "□"),
+   621→        el("span", { color: "#1c1917" }, tip)
+   622→      )
+   623→    );
+   624→  }
+   625→  return wrap;
+   626→}
+   627→
+   628→/** یک کادر امضا */
+   629→function signBox(title: string): HTMLElement {
+   630→  return el(
+   631→    "div",
+   632→    {
+   633→      width: "48%",
+   634→      height: "100px",
+   635→      border: "2px dashed #737373",
+   636→      borderRadius: "8px",
+   637→      boxSizing: "border-box",
+   638→      padding: "10px 14px",
+   639→    },
+   640→    el(
+   641→      "div",
+   642→      { fontWeight: "700", fontSize: "12.5px", color: "#44403c" },
+   643→      title
+   644→    ),
+   645→    el(
+   646→      "div",
+   647→      { fontSize: "11.5px", color: "#78716c", marginTop: "8px" },
+   648→      "نام: ............"
+   649→    ),
+   650→    el(
+   651→      "div",
+   652→      { fontSize: "11.5px", color: "#78716c" },
+   653→      "تاریخ: ............"
+   654→    )
+   655→  );
+   656→}
+   657→
+   658→/** ذ) بلوک «۹. تأییدات» — دو کادر امضا کنار هم */
+   659→function signaturesBlock(): HTMLElement {
+   660→  return el(
+   661→    "div",
+   662→    { display: "flex", justifyContent: "space-between" },
+   663→    signBox("امضا و مهر — مهندس ناظر"),
+   664→    signBox("امضا و مهر — سرپرست لیفت")
+   665→  );
+   666→}
+   667→
+   668→/** ر) پانوشت گزارش */
+   669→function footerBlock(): HTMLElement {
+   670→  return el(
+   671→    "div",
+   672→    {
+   673→      borderTop: "1px solid #e4e4e7",
+   674→      marginTop: "28px",
+   675→      paddingTop: "10px",
+   676→      fontSize: "10.5px",
+   677→      color: "#78716c",
+   678→      lineHeight: "1.8",
+   679→    },
+   680→    el(
+   681→      "div",
+   682→      {},
+   683→      "این گزارش توسط CraneLift Pro 3D تولید شده است. داده‌های لودچارت مرجع، تقریبی و صرفاً برای برنامه‌ریزی اولیه است؛ پیش از اجرای لیفت واقعی، لودچارت رسمی سازنده ملاک عمل است."
+   684→    ),
+   685→    el(
+   686→      "div",
+   687→      { marginTop: "2px" },
+   688→      `زمان تولید گزارش: ${new Date().toLocaleString("fa-IR")}`
+   689→    )
+   690→  );
+   691→}
+   692→
+   693→// ───────────────────────── ساخت DOM گزارش ─────────────────────────
+   694→
+   695→/** ساخت کامل DOM گزارش (عنصر مخفی خارج از دید — فقط استایل inline) */
+   696→function buildReportElement(data: ReportData): HTMLDivElement {
+   697→  const root = el("div", {
+   698→    position: "fixed",
+   699→    left: "-20000px",
+   700→    top: "0",
+   701→    width: `${REPORT_W_PX}px`,
+   702→    background: "#ffffff",
+   703→    color: "#1c1917",
+   704→    fontFamily: "'Vazirmatn', Tahoma, Arial, sans-serif",
+   705→    direction: "rtl",
+   706→    padding: "32px",
+   707→    boxSizing: "border-box",
+   708→    fontSize: "13px",
+   709→    lineHeight: "1.9",
+   710→    zIndex: "-1",
+   711→  });
+   712→
+   713→  // الف) سربرگ + متادیتای پروژه
+   714→  root.appendChild(headerBand(data));
+   715→  // ب) بنر نتیجه نهایی
+   716→  root.appendChild(resultBanner(data.result));
+   717→  // پ) ۱. مشخصات جرثقیل
+   718→  root.appendChild(h2("۱. مشخصات جرثقیل"));
+   719→  root.appendChild(kvTable(craneRows(data.crane)));
+   720→  // ت) ۲. خلاصه ورودی‌های لیفت
+   721→  root.appendChild(h2("۲. خلاصه ورودی‌های لیفت"));
+   722→  root.appendChild(kvTable(inputRows(data.crane, data.inputs)));
+   723→  // ث) ۳. تصاویر (فقط در صورت وجود)
+   724→  const images = imagesBlock(data);
+   725→  if (images) {
+   726→    root.appendChild(h2("۳. تصاویر"));
+   727→    root.appendChild(images);
+   728→  }
+   729→  // ج) ۴. نتایج تحلیل
+   730→  root.appendChild(h2("۴. نتایج تحلیل"));
+   731→  root.appendChild(kvTable(resultRows(data.result)));
+   732→  // چ) ۵. جدول بررسی‌های ایمنی
+   733→  root.appendChild(h2("۵. جدول بررسی‌های ایمنی"));
+   734→  root.appendChild(checksBlock(data.result));
+   735→  // ح) ۶. هشدارها
+   736→  root.appendChild(h2("۶. هشدارها"));
+   737→  root.appendChild(warningsBlock(data.result));
+   738→  // خ) ۷. لودچارت استفاده‌شده
+   739→  root.appendChild(chartBlock(data.chart, data.inputs.boomLengthM));
+   740→  // د) ۸. توصیه‌های ایمنی
+   741→  root.appendChild(h2("۸. توصیه‌های ایمنی"));
+   742→  root.appendChild(safetyTipsBlock());
+   743→  // ذ) ۹. تأییدات
+   744→  root.appendChild(h2("۹. تأییدات"));
+   745→  root.appendChild(signaturesBlock());
+   746→  // ر) پانوشت
+   747→  root.appendChild(footerBlock());
+   748→
+   749→  return root;
+   750→}
+   751→
+   752→// ───────────────────────── رندر و خروجی ─────────────────────────
+   753→
+   754→/**
+   755→ * ساخت DOM + رندر کل گزارش به یک Canvas با html2canvas.
+   756→ * عنصر موقت همیشه در finally از body حذف می‌شود.
+   757→ */
+   758→async function renderReportCanvas(data: ReportData): Promise<HTMLCanvasElement> {
+   759→  const { default: html2canvas } = await import("html2canvas-pro");
+   760→  const element = buildReportElement(data);
+   761→  document.body.appendChild(element);
+   762→  try {
+   763→    await document.fonts.ready;
+   764→    return await html2canvas(element, {
+   765→      scale: RENDER_SCALE,
+   766→      backgroundColor: "#ffffff",
+   767→      useCORS: true,
+   768→      logging: false,
+   769→    });
+   770→  } finally {
+   771→    element.remove();
+   772→  }
+   773→}
+   774→
+   775→/**
+   776→ * تولید و دانلود گزارش PDF چندصفحه‌ای A4 (فارسی، RTL).
+   777→ * فقط در مرورگر صدا زده شود — ارورها با پیام فارسی مجدداً پرتاب می‌شوند.
+   778→ */
+   779→export async function downloadPDFReport(data: ReportData): Promise<void> {
+   780→  try {
+   781→    const canvas = await renderReportCanvas(data);
+   782→    const { jsPDF } = await import("jspdf");
+   783→
+   784→    const pdf = new jsPDF({
+   785→      orientation: "portrait",
+   786→      unit: "mm",
+   787→      format: "a4",
+   788→      compress: true,
+   789→    });
+   790→    pdf.setProperties({
+   791→      title: `CraneLift Report — ${data.meta.projectId}`,
+   792→      creator: "CraneLift Pro 3D",
+   793→    });
+   794→
+   795→    // برش عمودی گزارش به صفحات A4
+   796→    const imgWidth = PAGE_W_MM; // میلی‌متر
+   797→    const pxPerMm = canvas.width / imgWidth;
+   798→    const pageHeightPx = Math.floor(PAGE_H_MM * pxPerMm);
+   799→
+   800→    let offsetPx = 0;
+   801→    let pageIndex = 0;
+   802→    while (offsetPx < canvas.height) {
+   803→      const sliceHeightPx = Math.min(pageHeightPx, canvas.height - offsetPx);
+   804→
+   805→      const slice = document.createElement("canvas");
+   806→      slice.width = canvas.width;
+   807→      slice.height = sliceHeightPx;
+   808→      const ctx = slice.getContext("2d");
+   809→      if (!ctx) throw new Error("دسترسی به زمینه بوم (2D context) ممکن نیست.");
+   810→      ctx.fillStyle = "#ffffff";
+   811→      ctx.fillRect(0, 0, slice.width, slice.height);
+   812→      ctx.drawImage(canvas, 0, -offsetPx);
+   813→
+   814→      const sliceHeightMm = sliceHeightPx / pxPerMm;
+   815→      if (pageIndex > 0) pdf.addPage();
+   816→      pdf.addImage(
+   817→        slice.toDataURL("image/jpeg", JPEG_QUALITY),
+   818→        "JPEG",
+   819→        0,
+   820→        0,
+   821→        imgWidth,
+   822→        sliceHeightMm
+   823→      );
+   824→
+   825→      offsetPx += sliceHeightPx;
+   826→      pageIndex += 1;
+   827→    }
+   828→
+   829→    pdf.save(`CraneLift-Report-${data.meta.projectId}.pdf`);
+   830→  } catch (err) {
+   831→    throw new Error(
+   832→      `خطا در ساخت گزارش PDF: ${err instanceof Error ? err.message : String(err)}`
+   833→    );
+   834→  }
+   835→}
+   836→
+   837→/**
+   838→ * ساخت پیش‌نمایش سریع گزارش به‌صورت dataURL تصویر PNG
+   839→ * (کل گزارش در یک تصویر — برای نمایش زنده قبل از دانلود).
+   840→ * فقط در مرورگر صدا زده شود.
+   841→ */
+   842→export async function buildReportDataURL(data: ReportData): Promise<string> {
+   843→  try {
+   844→    const canvas = await renderReportCanvas(data);
+   845→    return canvas.toDataURL("image/png");
+   846→  } catch (err) {
+   847→    throw new Error(
+   848→      `خطا در ساخت گزارش PDF: ${err instanceof Error ? err.message : String(err)}`
+   849→    );
+   850→  }
+   851→}
+   852→

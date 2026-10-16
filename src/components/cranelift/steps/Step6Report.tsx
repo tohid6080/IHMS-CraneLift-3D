@@ -33,6 +33,8 @@ import { getChartFor } from "@/lib/cranelift/load-charts";
 import { STATUS_COLORS, STATUS_LABELS } from "@/lib/cranelift/analysis";
 import { downloadPDFReport, buildReportDataURL } from "@/lib/cranelift/pdf";
 import { runAnalysis } from "../run-analysis";
+import { useUiStore } from "../ui-store";
+import { quotaCheck } from "@/lib/cranelift/licensing";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Step6Report() {
@@ -48,7 +50,12 @@ export default function Step6Report() {
   const result = useLiftStore((s) => s.result);
   const screenshot3D = useLiftStore((s) => s.screenshot3D);
   const chartImage = useLiftStore((s) => s.chartImage);
+  const transfer = useLiftStore((s) => s.transfer);
+  const license = useLiftStore((s) => s.license);
+  const usage = useLiftStore((s) => s.usage);
+  const consume = useLiftStore((s) => s.consume);
   const resetAll = useLiftStore((s) => s.resetAll);
+  const setUpgradeOpen = useUiStore((s) => s.setUpgradeOpen);
 
   const customCranes = useLiftStore((s) => s.customCranes);
   const crane = getCraneById(selectedId, customCranes);
@@ -74,6 +81,8 @@ export default function Step6Report() {
     result,
     screenshot3D,
     chartImage,
+    transfer,
+    planType: license.plan,
   });
 
   const handleCapture = async () => {
@@ -111,12 +120,30 @@ export default function Step6Report() {
       });
       return;
     }
+    // سهمیه PDF نسخه رایگان: ۱ گزارش در روز (با واترمارک)
+    const q = quotaCheck(license.plan, usage, "pdf");
+    if (!q.ok) {
+      toast({
+        title: "سهمیه گزارش رایگان امروز تمام شد",
+        description: `نسخه رایگان: ${q.limit} گزارش در روز. برای گزارش نامحدود بدون واترمارک، ارتقا دهید.`,
+        variant: "destructive",
+      });
+      setUpgradeOpen(true);
+      return;
+    }
     setBusy("pdf");
     try {
+      consume("pdf");
       // تازه‌سازی تصاویر قبل از ساخت گزارش
       await runAnalysis();
       await downloadPDFReport(assembleData());
-      toast({ title: "گزارش PDF آماده شد", description: "فایل در مسیر دانلودها ذخیره شد." });
+      toast({
+        title: "گزارش PDF آماده شد",
+        description:
+          license.plan === "pro"
+            ? "فایل در مسیر دانلودها ذخیره شد."
+            : "ذخیره شد (نسخه رایگان با واترمارک).",
+      });
     } catch (e) {
       toast({
         title: "خطا در ساخت گزارش PDF",

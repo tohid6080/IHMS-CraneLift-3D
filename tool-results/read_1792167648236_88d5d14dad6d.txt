@@ -1,0 +1,770 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * CraneLift Pro 3D — صحنه سه‌بعدی (React Three Fiber)
+     5→ * -----------------------------------------------------------
+     6→ * شماتیک واقعی و قابل چرخش/زوم از جرثقیل انتخابی + بار + زمین + مانع.
+     7→ * - بوم و جیب دقیقاً بر اساس زوایای ورودی حرکت می‌کنند
+     8→ * - بار با اسلینگ به قلاب متصل است و رنگ آن وضعیت لیفت را نشان می‌دهد
+     9→ * - شامل: خط شعاع کاری، منطقه ممنوعه، خطوط نیرو، برچسب‌ها، شیب زمین
+    10→ * این کامپوننت باید صرفاً به‌صورت client-only (dynamic + ssr:false) لود شود.
+    11→ */
+    12→
+    13→import { useEffect, useMemo, useRef } from "react";
+    14→import { Canvas, useThree } from "@react-three/fiber";
+    15→import { Edges, Grid, Line, OrbitControls } from "@react-three/drei";
+    16→import * as THREE from "three";
+    17→import { useLiftStore } from "@/lib/cranelift/store";
+    18→import { getCraneById } from "@/lib/cranelift/cranes";
+    19→import { solveGeometry, STATUS_COLORS, HOOK_BLOCK_HEIGHT_M } from "@/lib/cranelift/analysis";
+    20→import { sceneCapture } from "@/lib/cranelift/capture";
+    21→import { useView3D } from "./view3d-store";
+    22→import type { Crane, LiftInputs } from "@/lib/cranelift/types";
+    23→
+    24→const D2R = Math.PI / 180;
+    25→const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+    26→
+    27→// ───────────────────────── برچسب سه‌بعدی (Sprite بافت‌متنی) ─────────────────────────
+    28→// به‌جای drei Html (که با React 19 خطای unmount می‌دهد) از Sprite با
+    29→// CanvasTexture استفاده می‌کنیم — کاملاً داخل WebGL و بدون React root.
+    30→function makeTextTexture(
+    31→  text: string,
+    32→  opts: { color?: string; bg?: string; border?: string }
+    33→): { tex: THREE.CanvasTexture; aspect: number } {
+    34→  const pad = 16;
+    35→  const font = "700 46px Vazirmatn, Tahoma, sans-serif";
+    36→  const measure = document.createElement("canvas").getContext("2d");
+    37→  measure!.font = font;
+    38→  const w = Math.ceil(measure!.measureText(text).width) + pad * 2;
+    39→  const h = 72;
+    40→  const canvas = document.createElement("canvas");
+    41→  canvas.width = w * 2;
+    42→  canvas.height = h * 2;
+    43→  const ctx = canvas.getContext("2d")!;
+    44→  ctx.scale(2, 2);
+    45→  // پس‌زمینه گرد
+    46→  ctx.fillStyle = opts.bg ?? "rgba(10,10,10,0.78)";
+    47→  ctx.beginPath();
+    48→  ctx.roundRect(0.5, 0.5, w - 1, h - 1, 10);
+    49→  ctx.fill();
+    50→  if (opts.border) {
+    51→    ctx.strokeStyle = opts.border;
+    52→    ctx.lineWidth = 2.5;
+    53→    ctx.stroke();
+    54→  }
+    55→  ctx.font = font;
+    56→  ctx.fillStyle = opts.color ?? "#ffffff";
+    57→  ctx.textBaseline = "middle";
+    58→  ctx.fillText(text, pad, h / 2 + 2);
+    59→  const tex = new THREE.CanvasTexture(canvas);
+    60→  tex.colorSpace = THREE.SRGBColorSpace;
+    61→  tex.anisotropy = 4;
+    62→  return { tex, aspect: w / h };
+    63→}
+    64→
+    65→function Label3D({
+    66→  position,
+    67→  text,
+    68→  color = "#ffffff",
+    69→  bg = "rgba(10,10,10,0.78)",
+    70→  border,
+    71→  height = 2.1,
+    72→}: {
+    73→  position: [number, number, number];
+    74→  text: string;
+    75→  color?: string;
+    76→  bg?: string;
+    77→  border?: string;
+    78→  height?: number;
+    79→}) {
+    80→  const { tex, aspect } = useMemo(() => makeTextTexture(text, { color, bg, border }), [text, color, bg, border]);
+    81→  useEffect(() => () => tex.dispose(), [tex]);
+    82→  return (
+    83→    <sprite position={position} scale={[height * aspect, height, 1]}>
+    84→      <spriteMaterial map={tex} transparent depthTest={false} toneMapped={false} />
+    85→    </sprite>
+    86→  );
+    87→}
+    88→
+    89→// ───────────────────────── ثبت تابع اسکرین‌شات ─────────────────────────
+    90→function CaptureRegister() {
+    91→  const gl = useThree((s) => s.gl);
+    92→  const scene = useThree((s) => s.scene);
+    93→  const camera = useThree((s) => s.camera);
+    94→  useEffect(() => {
+    95→    sceneCapture.capture = () => {
+    96→      gl.render(scene, camera);
+    97→      return gl.domElement.toDataURL("image/png");
+    98→    };
+    99→    return () => {
+   100→      sceneCapture.capture = null;
+   101→    };
+   102→  }, [gl, scene, camera]);
+   103→  return null;
+   104→}
+   105→
+   106→// ───────────────────────── دوربین هوشمند ─────────────────────────
+   107→function CameraRig({ radius, height }: { radius: number; height: number }) {
+   108→  const controls = useThree((s) => s.controls) as unknown as {
+   109→    target: THREE.Vector3;
+   110→    object: THREE.PerspectiveCamera;
+   111→    update: () => void;
+   112→  } | null;
+   113→  const lastFit = useRef({ radius: 0, height: 0 });
+   114→
+   115→  useEffect(() => {
+   116→    if (!controls) return;
+   117→    const first = lastFit.current.radius === 0;
+   118→    const dr = Math.abs(radius - lastFit.current.radius);
+   119→    const dh = Math.abs(height - lastFit.current.height);
+   120→    if (first || dr > 8 || dh > 12) {
+   121→      lastFit.current = { radius, height };
+   122→      // فاصله دوربین متناسب با بزرگ‌ترین بعد صحنه + مارجین برای قاب کامل
+   123→      const dist = Math.max(radius, height * 0.9) * 1.25 + 18;
+   124→      controls.target.set(radius * 0.45, Math.max(2, height * 0.32), 0);
+   125→      controls.object.position.set(dist * 0.82, Math.max(11, height * 0.6 + 7), dist * 0.82);
+   126→      controls.update();
+   127→    }
+   128→  }, [controls, radius, height]);
+   129→  return null;
+   130→}
+   131→
+   132→// ───────────────────────── جزئیات مشترک ─────────────────────────
+   133→
+   134→/** زمین + گرید */
+   135→function Ground() {
+   136→  return (
+   137→    <group>
+   138→      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
+   139→        <planeGeometry args={[260, 260]} />
+   140→        <meshStandardMaterial color="#262626" roughness={1} metalness={0} />
+   141→      </mesh>
+   142→      <Grid
+   143→        position={[0, 0.02, 0]}
+   144→        infiniteGrid
+   145→        cellSize={2}
+   146→        sectionSize={10}
+   147→        cellColor="#3a3a3a"
+   148→        sectionColor="#555555"
+   149→        fadeDistance={140}
+   150→        fadeStrength={1.4}
+   151→      />
+   152→    </group>
+   153→  );
+   154→}
+   155→
+   156→/** منطقه ممنوعه (دایره قرمز نیمه‌شفاف روی زمین) */
+   157→function ExclusionZone({ radiusM }: { radiusM: number }) {
+   158→  const ring = useMemo(() => {
+   159→    const pts: [number, number, number][] = [];
+   160→    for (let i = 0; i <= 72; i++) {
+   161→      const a = (i / 72) * Math.PI * 2;
+   162→      pts.push([Math.cos(a) * radiusM, 0.04, Math.sin(a) * radiusM]);
+   163→    }
+   164→    return pts;
+   165→  }, [radiusM]);
+   166→  return (
+   167→    <group>
+   168→      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
+   169→        <circleGeometry args={[radiusM, 72]} />
+   170→        <meshBasicMaterial color="#ef4444" transparent opacity={0.06} side={THREE.DoubleSide} />
+   171→      </mesh>
+   172→      <Line points={ring} color="#ef4444" lineWidth={1.2} transparent opacity={0.55} />
+   173→      <Label3D
+   174→        position={[radiusM * 0.72, 0.6, radiusM * 0.72]}
+   175→        text="Exclusion Zone"
+   176→        color="#fca5a5"
+   177→        bg="rgba(20,5,5,0.7)"
+   178→        border="rgba(239,68,68,0.5)"
+   179→      />
+   180→    </group>
+   181→  );
+   182→}
+   183→
+   184→/** فلش نیرو (عمودی) */
+   185→function ForceArrow({
+   186→  origin,
+   187→  length,
+   188→  color,
+   189→  dir,
+   190→}: {
+   191→  origin: [number, number, number];
+   192→  length: number;
+   193→  color: string;
+   194→  dir: 1 | -1;
+   195→}) {
+   196→  const shaftLen = length * 0.7;
+   197→  const coneLen = length - shaftLen;
+   198→  const shaftY = origin[1] + dir * (shaftLen / 2);
+   199→  const coneY = origin[1] + dir * (shaftLen + coneLen / 2);
+   200→  return (
+   201→    <group position={[origin[0], 0, origin[2]]}>
+   202→      <mesh position={[0, shaftY, 0]}>
+   203→        <cylinderGeometry args={[0.07, 0.07, shaftLen, 10]} />
+   204→        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.35} />
+   205→      </mesh>
+   206→      <mesh position={[0, coneY, 0]} rotation={[dir === 1 ? 0 : Math.PI, 0, 0]}>
+   207→        <coneGeometry args={[0.2, coneLen, 14]} />
+   208→        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.35} />
+   209→      </mesh>
+   210→    </group>
+   211→  );
+   212→}
+   213→
+   214→// ───────────────────────── جرثقیل سیار ─────────────────────────
+   215→function MobileCrane({
+   216→  specs,
+   217→  boomAngleRad,
+   218→  boomLengthM,
+   219→  useJib,
+   220→  jibLengthM,
+   221→  jibAngleRad,
+   222→}: {
+   223→  specs: Crane["specs"];
+   224→  boomAngleRad: number;
+   225→  boomLengthM: number;
+   226→  useJib: boolean;
+   227→  jibLengthM: number;
+   228→  jibAngleRad: number;
+   229→}) {
+   230→  const baseLen = 9;
+   231→  const extLen = Math.max(0.4, boomLengthM - (baseLen - 1));
+   232→  const axles = [-4.4, -2.2, 0, 2.2, 4.4];
+   233→  const halfSpan = specs.outriggerSpanM / 2;
+   234→
+   235→  return (
+   236→    <group>
+   237→      {/* کفی و شاسی */}
+   238→      <mesh position={[0, 1.35, 0]} castShadow>
+   239→        <boxGeometry args={[11.5, 0.9, 3]} />
+   240→        <meshStandardMaterial color="#27272a" metalness={0.5} roughness={0.55} />
+   241→      </mesh>
+   242→      {/* محورها و چرخ‌ها */}
+   243→      {axles.map((x, i) => (
+   244→        <group key={i} position={[x, 0.55, 0]}>
+   245→          {[1.5, -1.5].map((z) => (
+   246→            <mesh key={z} position={[0, 0, z]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+   247→              <cylinderGeometry args={[0.55, 0.55, 0.4, 18]} />
+   248→              <meshStandardMaterial color="#0a0a0a" roughness={0.9} />
+   249→            </mesh>
+   250→          ))}
+   251→        </group>
+   252→      ))}
+   253→      {/* اوت‌ریگرها */}
+   254→      {[[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([sx, sz], i) => (
+   255→        <group key={i}>
+   256→          <mesh position={[sx * 3.4, 1.0, sz * (1.5 + halfSpan / 2 - 0.75)]} castShadow>
+   257→            <boxGeometry args={[0.35, 0.3, halfSpan - 1.5]} />
+   258→            <meshStandardMaterial color="#3f3f46" metalness={0.6} roughness={0.4} />
+   259→          </mesh>
+   260→          <mesh position={[sx * 4.6, 0.15, sz * halfSpan]} castShadow>
+   261→            <boxGeometry args={[1.4, 0.3, 1.4]} />
+   262→            <meshStandardMaterial color="#52525b" metalness={0.4} roughness={0.6} />
+   263→          </mesh>
+   264→          <mesh position={[sx * 4.6, 0.55, sz * halfSpan]} castShadow>
+   265→            <cylinderGeometry args={[0.16, 0.16, 0.9, 10]} />
+   266→            <meshStandardMaterial color="#71717a" metalness={0.7} roughness={0.3} />
+   267→          </mesh>
+   268→        </group>
+   269→      ))}
+   270→      {/* سوپراستراکچر */}
+   271→      <mesh position={[-0.4, 2.15, 0]} castShadow>
+   272→        <boxGeometry args={[5.4, 0.5, 2.9]} />
+   273→        <meshStandardMaterial color="#f59e0b" metalness={0.3} roughness={0.5} />
+   274→      </mesh>
+   275→      <mesh position={[-1.2, 3.15, 0]} castShadow>
+   276→        <boxGeometry args={[4.4, 1.4, 2.7]} />
+   277→        <meshStandardMaterial color="#eab308" metalness={0.3} roughness={0.5} />
+   278→      </mesh>
+   279→      {/* کانترویت */}
+   280→      <mesh position={[-3.2, 3.05, 0]} castShadow>
+   281→        <boxGeometry args={[1.3, 2.1, 2.7]} />
+   282→        <meshStandardMaterial color="#52525b" metalness={0.4} roughness={0.6} />
+   283→        <Edges color="#3f3f46" />
+   284→      </mesh>
+   285→      {/* کابین اپراتور */}
+   286→      <mesh position={[1.8, 2.9, -1.55]} castShadow>
+   287→        <boxGeometry args={[1.7, 1.4, 1.1]} />
+   288→        <meshStandardMaterial color="#1c1917" metalness={0.5} roughness={0.3} />
+   289→      </mesh>
+   290→      {/* پایه بوم */}
+   291→      <mesh position={[specs.pivotOffsetM, specs.pivotHeightM, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+   292→        <cylinderGeometry args={[0.28, 0.28, 1.2, 14]} />
+   293→        <meshStandardMaterial color="#a16207" metalness={0.5} roughness={0.4} />
+   294→      </mesh>
+   295→
+   296→      {/* بوم تلسکوپی: گروه با دوران زاویه بوم */}
+   297→      <group position={[specs.pivotOffsetM, specs.pivotHeightM, 0]} rotation={[0, 0, boomAngleRad]}>
+   298→        <mesh position={[baseLen / 2, 0, 0]} castShadow>
+   299→          <boxGeometry args={[baseLen, 0.75, 0.75]} />
+   300→          <meshStandardMaterial color="#f59e0b" metalness={0.35} roughness={0.45} />
+   301→          <Edges color="#92400e" />
+   302→        </mesh>
+   303→        <mesh position={[baseLen - 1 + extLen / 2 - 0.2, 0, 0]} castShadow>
+   304→          <boxGeometry args={[extLen, 0.55, 0.55]} />
+   305→          <meshStandardMaterial color="#fbbf24" metalness={0.35} roughness={0.45} />
+   306→          <Edges color="#92400e" />
+   307→        </mesh>
+   308→        {/* جیب */}
+   309→        {useJib && (
+   310→          <group position={[boomLengthM - 0.4, 0.15, 0]} rotation={[0, 0, jibAngleRad - boomAngleRad]}>
+   311→            <mesh position={[jibLengthM / 2, 0, 0]} castShadow>
+   312→              <boxGeometry args={[jibLengthM, 0.32, 0.32]} />
+   313→              <meshStandardMaterial color="#d97706" metalness={0.35} roughness={0.5} />
+   314→              <Edges color="#78350f" />
+   315→            </mesh>
+   316→          </group>
+   317→        )}
+   318→      </group>
+   319→    </group>
+   320→  );
+   321→}
+   322→
+   323→// ───────────────────────── جرثقیل شنی ─────────────────────────
+   324→function CrawlerCrane({
+   325→  specs,
+   326→  boomAngleRad,
+   327→  boomLengthM,
+   328→  useJib,
+   329→  jibLengthM,
+   330→  jibAngleRad,
+   331→}: {
+   332→  specs: Crane["specs"];
+   333→  boomAngleRad: number;
+   334→  boomLengthM: number;
+   335→  useJib: boolean;
+   336→  jibLengthM: number;
+   337→  jibAngleRad: number;
+   338→}) {
+   339→  const gauge = specs.outriggerSpanM;
+   340→  return (
+   341→    <group>
+   342→      {/* شنی‌ها */}
+   343→      {[gauge / 2, -gauge / 2].map((z) => (
+   344→        <group key={z} position={[0, 0, z]}>
+   345→          <mesh position={[0, 0.85, 0]} castShadow>
+   346→            <boxGeometry args={[12, 1.7, 1.9]} />
+   347→            <meshStandardMaterial color="#0a0a0a" roughness={0.95} />
+   348→          </mesh>
+   349→          {/* کفشک‌های شنی */}
+   350→          {Array.from({ length: 11 }).map((_, i) => (
+   351→            <mesh key={i} position={[-5 + i * 1.05, 0.12, 0]} castShadow>
+   352→              <boxGeometry args={[0.5, 0.28, 2.1]} />
+   353→              <meshStandardMaterial color="#27272a" roughness={0.9} />
+   354→            </mesh>
+   355→          ))}
+   356→        </group>
+   357→      ))}
+   358→      {/* بدنه بالا */}
+   359→      <mesh position={[0, 2.15, 0]} castShadow>
+   360→        <boxGeometry args={[7.2, 1.0, gauge - 1.6]} />
+   361→        <meshStandardMaterial color="#27272a" metalness={0.5} roughness={0.5} />
+   362→      </mesh>
+   363→      <mesh position={[-0.6, 3.5, 0]} castShadow>
+   364→        <boxGeometry args={[6.2, 2.0, gauge - 2.2]} />
+   365→        <meshStandardMaterial color="#eab308" metalness={0.3} roughness={0.5} />
+   366→        <Edges color="#92400e" />
+   367→      </mesh>
+   368→      {/* کانترویت */}
+   369→      <mesh position={[-3.4, 3.6, 0]} castShadow>
+   370→        <boxGeometry args={[1.5, 2.4, gauge - 2.4]} />
+   371→        <meshStandardMaterial color="#52525b" metalness={0.4} roughness={0.6} />
+   372→        <Edges color="#3f3f46" />
+   373→      </mesh>
+   374→      {/* کابین */}
+   375→      <mesh position={[2.4, 3.7, -gauge / 2 + 1.6]} castShadow>
+   376→        <boxGeometry args={[1.8, 1.5, 1.2]} />
+   377→        <meshStandardMaterial color="#1c1917" metalness={0.5} roughness={0.3} />
+   378→      </mesh>
+   379→      {/* پایه بوم */}
+   380→      <mesh position={[specs.pivotOffsetM, specs.pivotHeightM, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+   381→        <cylinderGeometry args={[0.3, 0.3, 1.4, 14]} />
+   382→        <meshStandardMaterial color="#a16207" metalness={0.5} roughness={0.4} />
+   383→      </mesh>
+   384→
+   385→      {/* بوم اصلی */}
+   386→      <group position={[specs.pivotOffsetM, specs.pivotHeightM, 0]} rotation={[0, 0, boomAngleRad]}>
+   387→        <mesh position={[boomLengthM / 2, 0, 0]} castShadow>
+   388→          <boxGeometry args={[boomLengthM, 0.7, 0.7]} />
+   389→          <meshStandardMaterial color="#ca8a04" metalness={0.35} roughness={0.5} />
+   390→          <Edges color="#78350f" />
+   391→        </mesh>
+   392→        {useJib && (
+   393→          <group position={[boomLengthM, 0.1, 0]} rotation={[0, 0, jibAngleRad - boomAngleRad]}>
+   394→            <mesh position={[jibLengthM / 2, 0, 0]} castShadow>
+   395→              <boxGeometry args={[jibLengthM, 0.3, 0.3]} />
+   396→              <meshStandardMaterial color="#d97706" metalness={0.35} roughness={0.5} />
+   397→              <Edges color="#78350f" />
+   398→            </mesh>
+   399→          </group>
+   400→        )}
+   401→      </group>
+   402→    </group>
+   403→  );
+   404→}
+   405→
+   406→// ───────────────────────── جرثقیل برجی ─────────────────────────
+   407→function TowerCrane({
+   408→  specs,
+   409→  jibLengthM,
+   410→  radiusM,
+   411→}: {
+   412→  specs: Crane["specs"];
+   413→  jibLengthM: number;
+   414→  radiusM: number;
+   415→}) {
+   416→  const H = specs.freestandingHookHeightM ?? 50;
+   417→  return (
+   418→    <group>
+   419→      {/* فونداسیون */}
+   420→      <mesh position={[0, 0.25, 0]} castShadow>
+   421→        <boxGeometry args={[3.6, 0.5, 3.6]} />
+   422→        <meshStandardMaterial color="#52525b" roughness={0.9} />
+   423→      </mesh>
+   424→      {/* برج */}
+   425→      <mesh position={[0, H / 2, 0]} castShadow>
+   426→        <boxGeometry args={[2.0, H, 2.0]} />
+   427→        <meshStandardMaterial color="#f59e0b" metalness={0.3} roughness={0.5} />
+   428→        <Edges color="#92400e" />
+   429→      </mesh>
+   430→      {/* واحد دوران + کابین */}
+   431→      <mesh position={[0, H + 0.45, 0]} castShadow>
+   432→        <boxGeometry args={[2.6, 0.9, 2.6]} />
+   433→        <meshStandardMaterial color="#27272a" metalness={0.5} roughness={0.4} />
+   434→      </mesh>
+   435→      <mesh position={[1.6, H + 1.3, 0]} castShadow>
+   436→        <boxGeometry args={[1.5, 1.3, 1.2]} />
+   437→        <meshStandardMaterial color="#1c1917" metalness={0.5} roughness={0.3} />
+   438→      </mesh>
+   439→      {/* سر برج */}
+   440→      <mesh position={[0, H + 2.3, 0]} castShadow>
+   441→        <boxGeometry args={[0.6, 3.0, 0.6]} />
+   442→        <meshStandardMaterial color="#d97706" metalness={0.3} roughness={0.5} />
+   443→      </mesh>
+   444→      {/* جیب (بوم افقی) */}
+   445→      <mesh position={[jibLengthM / 2, H + 1.0, 0]} castShadow>
+   446→        <boxGeometry args={[jibLengthM, 0.9, 0.9]} />
+   447→        <meshStandardMaterial color="#f59e0b" metalness={0.3} roughness={0.5} />
+   448→        <Edges color="#92400e" />
+   449→      </mesh>
+   450→      {/* جیب کانترویت */}
+   451→      <mesh position={[-3.4, H + 1.0, 0]} castShadow>
+   452→        <boxGeometry args={[6.2, 0.8, 1.3]} />
+   453→        <meshStandardMaterial color="#a16207" metalness={0.3} roughness={0.5} />
+   454→      </mesh>
+   455→      {[0, 1, 2].map((i) => (
+   456→        <mesh key={i} position={[-5.0 - i * 0.65, H + 0.35, 0]} castShadow>
+   457→          <boxGeometry args={[0.55, 1.3, 1.1]} />
+   458→          <meshStandardMaterial color="#52525b" roughness={0.7} />
+   459→        </mesh>
+   460→      ))}
+   461→      {/* مهارها */}
+   462→      <Line points={[[0, H + 3.6, 0], [jibLengthM * 0.45, H + 1.5, 0]]} color="#71717a" lineWidth={1.2} />
+   463→      <Line points={[[0, H + 3.6, 0], [-5.6, H + 1.4, 0]]} color="#71717a" lineWidth={1.2} />
+   464→      {/* تالی */}
+   465→      <mesh position={[radiusM, H + 0.35, 0]} castShadow>
+   466→        <boxGeometry args={[0.9, 0.5, 0.9]} />
+   467→        <meshStandardMaterial color="#1c1917" metalness={0.5} roughness={0.4} />
+   468→      </mesh>
+   469→    </group>
+   470→  );
+   471→}
+   472→
+   473→// ───────────────────────── قلاب، اسلینگ و بار ─────────────────────────
+   474→function HookAndLoad({
+   475→  inputs,
+   476→  hookX,
+   477→  hookTopY,
+   478→  statusColor,
+   479→  showLabels,
+   480→  showForces,
+   481→  grossT,
+   482→}: {
+   483→  inputs: LiftInputs;
+   484→  hookX: number;
+   485→  hookTopY: number;
+   486→  statusColor: string;
+   487→  showLabels: boolean;
+   488→  showForces: boolean;
+   489→  grossT: number;
+   490→}) {
+   491→  const { loadDims: dims, rigging } = inputs;
+   492→  const blockY = hookTopY - HOOK_BLOCK_HEIGHT_M;
+   493→
+   494→  // افت عمودی اسلینگ‌ها (مطابق منطق تحلیل)
+   495→  const halfSpan = Math.max(dims.lengthM, dims.widthM) / 2;
+   496→  const beta = Math.max(rigging.slingAngleDeg, 10);
+   497→  const drop = rigging.useSpreader ? 1.2 + halfSpan * 0.25 : halfSpan * Math.tan(beta * D2R);
+   498→
+   499→  const loadTopY = Math.max(dims.heightM, blockY - drop - 0.15);
+   500→  const loadCenterY = loadTopY - dims.heightM / 2;
+   501→  const liftLen = clamp(grossT * 0.12, 1.4, 5);
+   502→
+   503→  const slingColor = "#e5e5e5";
+   504→  const barY = blockY - 1.2;
+   505→
+   506→  // نقاط اتصال اسلینگ‌ها
+   507→  const slingLines: [number, number, number][][] = useMemo(() => {
+   508→    if (rigging.useSpreader) {
+   509→      const ends = rigging.slingCount === 4 ? 1 : 1;
+   510→      const lower: [number, number, number][][] = [];
+   511→      // اسلینگ‌های بالایی: قلاب → دو سر تیر
+   512→      const up1: [number, number, number][] = [[hookX, blockY, 0], [hookX - halfSpan - 0.3, barY, 0]];
+   513→      const up2: [number, number, number][] = [[hookX, blockY, 0], [hookX + halfSpan + 0.3, barY, 0]];
+   514→      lower.push(up1, up2);
+   515→      if (rigging.slingCount === 4) {
+   516→        for (const sx of [-1, 1]) {
+   517→          for (const sz of [-1, 1]) {
+   518→            lower.push([
+   519→              [hookX + sx * (halfSpan + 0.3), barY, 0],
+   520→              [hookX + sx * (dims.lengthM / 2), loadTopY, sz * (dims.widthM / 2)],
+   521→            ]);
+   522→          }
+   523→        }
+   524→      } else {
+   525→        for (const sx of [-1, 1]) {
+   526→          lower.push([
+   527→            [hookX + sx * (halfSpan + 0.3), barY, 0],
+   528→            [hookX + sx * (dims.lengthM / 2), loadTopY, 0],
+   529→          ]);
+   530→        }
+   531→      }
+   532→      return lower.slice(0, 2 + ends * rigging.slingCount);
+   533→    }
+   534→    if (rigging.slingCount === 4) {
+   535→      return ([-1, 1] as const).flatMap((sx) =>
+   536→        ([-1, 1] as const).map(
+   537→          (sz): [number, number, number][] => [
+   538→            [hookX, blockY, 0],
+   539→            [hookX + sx * (dims.lengthM / 2), loadTopY, sz * (dims.widthM / 2)],
+   540→          ]
+   541→        )
+   542→      );
+   543→    }
+   544→    return ([-1, 1] as const).map(
+   545→      (sx): [number, number, number][] => [
+   546→        [hookX, blockY, 0],
+   547→        [hookX + sx * (dims.lengthM / 2), loadTopY, 0],
+   548→      ]
+   549→    );
+   550→  }, [rigging.useSpreader, rigging.slingCount, hookX, blockY, barY, halfSpan, loadTopY, dims.lengthM, dims.widthM]);
+   551→
+   552→  return (
+   553→    <group>
+   554→      {/* کابل جرثقیل */}
+   555→      <Line points={[[hookX, hookTopY, 0], [hookX, blockY + 0.45, 0]]} color="#d4d4d8" lineWidth={1.4} />
+   556→      {/* بلاک قلاب */}
+   557→      <mesh position={[hookX, blockY, 0]} castShadow>
+   558→        <boxGeometry args={[0.55, 0.85, 0.45]} />
+   559→        <meshStandardMaterial color="#1c1917" metalness={0.6} roughness={0.35} />
+   560→      </mesh>
+   561→      <mesh position={[hookX, blockY - 0.55, 0]} castShadow>
+   562→        <cylinderGeometry args={[0.07, 0.07, 0.3, 8]} />
+   563→        <meshStandardMaterial color="#a1a1aa" metalness={0.8} roughness={0.25} />
+   564→      </mesh>
+   565→
+   566→      {/* تیر پخش‌کننده */}
+   567→      {rigging.useSpreader && (
+   568→        <mesh position={[hookX, barY, 0]} castShadow>
+   569→          <boxGeometry args={[halfSpan * 2 + 0.9, 0.28, 0.28]} />
+   570→          <meshStandardMaterial color="#52525b" metalness={0.5} roughness={0.4} />
+   571→        </mesh>
+   572→      )}
+   573→
+   574→      {/* اسلینگ‌ها */}
+   575→      {slingLines.map((pts, i) => (
+   576→        <Line key={i} points={pts} color={slingColor} lineWidth={1.6} />
+   577→      ))}
+   578→
+   579→      {/* بار — رنگ بر اساس وضعیت تحلیل */}
+   580→      <mesh position={[hookX, loadCenterY, 0]} castShadow>
+   581→        <boxGeometry args={[dims.lengthM, dims.heightM, dims.widthM]} />
+   582→        <meshStandardMaterial color={statusColor} metalness={0.25} roughness={0.55} transparent opacity={0.92} />
+   583→        <Edges color="#ffffff" />
+   584→      </mesh>
+   585→
+   586→      {/* خطوط نیرو */}
+   587→      {showForces && (
+   588→        <group>
+   589→          {/* وزن بار (به پایین) */}
+   590→          <ForceArrow origin={[hookX, loadCenterY + dims.heightM / 2 - 0.1, 0]} length={liftLen} color="#ef4444" dir={-1} />
+   591→          {/* نیروی بالابر (به بالا) */}
+   592→          <ForceArrow origin={[hookX, loadTopY + 0.1, 0]} length={liftLen * 0.85} color="#22c55e" dir={1} />
+   593→        </group>
+   594→      )}
+   595→
+   596→      {/* برچسب‌ها */}
+   597→      {showLabels && (
+   598→        <>
+   599→          <Label3D position={[hookX, loadCenterY, 0]} text={`W = ${grossT.toFixed(1)} t`} />
+   600→          <Label3D
+   601→            position={[hookX, loadTopY + 0.9, 0]}
+   602→            text={`h = ${loadTopY.toFixed(1)} m`}
+   603→            color="#111111"
+   604→            bg={statusColor}
+   605→          />
+   606→        </>
+   607→      )}
+   608→    </group>
+   609→  );
+   610→}
+   611→
+   612→// ───────────────────────── بدنه اصلی صحنه ─────────────────────────
+   613→function SceneContent() {
+   614→  const selectedId = useLiftStore((s) => s.selectedCraneId);
+   615→  const inputs = useLiftStore((s) => s.inputs);
+   616→  const result = useLiftStore((s) => s.result);
+   617→  const view = useView3D();
+   618→
+   619→  const customCranes = useLiftStore((s) => s.customCranes);
+   620→  const crane = getCraneById(selectedId, customCranes);
+   621→  const geo = useMemo(() => (crane ? solveGeometry(crane, inputs) : null), [crane, inputs]);
+   622→
+   623→  const statusColor = result ? STATUS_COLORS[result.status] : "#a1a1aa";
+   624→  const grossT = inputs.loadWeightT + inputs.hookBlockWeightT + inputs.riggingWeightT;
+   625→
+   626→  if (!crane || !geo) return null;
+   627→
+   628→  const isTower = crane.type === "tower";
+   629→  const slewRad = -inputs.slewAngleDeg * D2R;
+   630→  const slopeRad = inputs.groundSlopeDeg * D2R;
+   631→
+   632→  // هندسه قلاب (حتی با خطای هندسی، برای رندر fallback داریم)
+   633→  const boomLen = inputs.boomLengthM;
+   634→  const jibH = inputs.useJib ? inputs.jibLengthM * Math.cos(inputs.jibAngleDeg * D2R) : 0;
+   635→  const jibV = inputs.useJib ? inputs.jibLengthM * Math.sin(inputs.jibAngleDeg * D2R) : 0;
+   636→  const fbAngle = geo.ok && !isTower ? geo.boomAngleDeg : inputs.boomAngleDeg;
+   637→  const hookX = isTower ? geo.radiusM : crane.specs.pivotOffsetM + boomLen * Math.cos(fbAngle * D2R) + jibH;
+   638→  const hookY = isTower
+   639→    ? (crane.specs.freestandingHookHeightM ?? 50)
+   640→    : crane.specs.pivotHeightM + boomLen * Math.sin(fbAngle * D2R) + jibV;
+   641→
+   642→  const exRadius = Math.max(geo.tipRadiusM || hookX, inputs.boomLengthM) + 3;
+   643→
+   644→  // مختصات جهانی بار برای خط شعاع
+   645→  const loadWorldX = Math.cos(-slewRad) * hookX;
+   646→  const loadWorldZ = Math.sin(-slewRad) * hookX;
+   647→
+   648→  return (
+   649→    <>
+   650→      <CaptureRegister />
+   651→      <CameraRig radius={hookX} height={hookY} />
+   652→      <color attach="background" args={["#18181b"]} />
+   653→      <fog attach="fog" args={["#18181b", 100, 280]} />
+   654→      <hemisphereLight args={["#e7e5e4", "#1c1917", 0.55]} />
+   655→      <ambientLight intensity={0.3} />
+   656→      <directionalLight
+   657→        castShadow
+   658→        position={[38, 55, 26]}
+   659→        intensity={1.5}
+   660→        shadow-mapSize-width={2048}
+   661→        shadow-mapSize-height={2048}
+   662→        shadow-camera-left={-70}
+   663→        shadow-camera-right={70}
+   664→        shadow-camera-top={70}
+   665→        shadow-camera-bottom={-70}
+   666→        shadow-camera-far={220}
+   667→      />
+   668→      <directionalLight position={[-30, 25, -20]} intensity={0.35} color="#fef3c7" />
+   669→
+   670→      {/* دنیای شیب‌دار (زمین + جرثقیل + بار) */}
+   671→      <group rotation={[0, 0, slopeRad]}>
+   672→        <Ground />
+   673→        {view.exclusion && <ExclusionZone radiusM={exRadius} />}
+   674→
+   675→        {/* خط شعاع کاری روی زمین */}
+   676→        {view.radiusLine && (
+   677→          <group>
+   678→            <Line
+   679→              points={[[0, 0.06, 0], [loadWorldX, 0.06, loadWorldZ]]}
+   680→              color="#f59e0b"
+   681→              lineWidth={2}
+   682→              dashed
+   683→              dashSize={0.9}
+   684→              gapSize={0.5}
+   685→            />
+   686→            {view.labels && (
+   687→              <Label3D
+   688→                position={[loadWorldX / 2, 0.8, loadWorldZ / 2]}
+   689→                text={`R = ${geo.radiusM.toFixed(1)} m`}
+   690→                color="#fbbf24"
+   691→                bg="rgba(15,10,2,0.78)"
+   692→                border="rgba(245,158,11,0.45)"
+   693→              />
+   694→            )}
+   695→          </group>
+   696→        )}
+   697→
+   698→        {/* جرثقیل با دوران سوپراستراکچر */}
+   699→        <group rotation={[0, slewRad, 0]}>
+   700→          {crane.type === "mobile" && (
+   701→            <MobileCrane
+   702→              specs={crane.specs}
+   703→              boomAngleRad={fbAngle * D2R}
+   704→              boomLengthM={boomLen}
+   705→              useJib={inputs.useJib}
+   706→              jibLengthM={inputs.jibLengthM}
+   707→              jibAngleRad={inputs.jibAngleDeg * D2R}
+   708→            />
+   709→          )}
+   710→          {crane.type === "crawler" && (
+   711→            <CrawlerCrane
+   712→              specs={crane.specs}
+   713→              boomAngleRad={fbAngle * D2R}
+   714→              boomLengthM={boomLen}
+   715→              useJib={inputs.useJib}
+   716→              jibLengthM={inputs.jibLengthM}
+   717→              jibAngleRad={inputs.jibAngleDeg * D2R}
+   718→            />
+   719→          )}
+   720→          {crane.type === "tower" && (
+   721→            <TowerCrane specs={crane.specs} jibLengthM={boomLen} radiusM={geo.radiusM} />
+   722→          )}
+   723→          <HookAndLoad
+   724→            inputs={inputs}
+   725→            hookX={hookX}
+   726→            hookTopY={hookY}
+   727→            statusColor={statusColor}
+   728→            showLabels={view.labels}
+   729→            showForces={view.forces}
+   730→            grossT={grossT}
+   731→          />
+   732→        </group>
+   733→
+   734→        {/* مانع */}
+   735→        {inputs.obstacle.enabled && (
+   736→          <mesh position={[inputs.obstacle.xM, inputs.obstacle.heightM / 2, inputs.obstacle.zM]} castShadow>
+   737→            <boxGeometry args={[inputs.obstacle.widthM, inputs.obstacle.heightM, inputs.obstacle.widthM]} />
+   738→            <meshStandardMaterial color="#f97316" transparent opacity={0.45} roughness={0.6} />
+   739→            <Edges color="#ea580c" />
+   740→          </mesh>
+   741→        )}
+   742→      </group>
+   743→
+   744→      <OrbitControls
+   745→        makeDefault
+   746→        enableDamping
+   747→        dampingFactor={0.08}
+   748→        minDistance={4}
+   749→        maxDistance={240}
+   750→        maxPolarAngle={Math.PI / 2.04}
+   751→      />
+   752→    </>
+   753→  );
+   754→}
+   755→
+   756→/** صحنه کامل — فقط client-only لود شود */
+   757→export default function CraneScene() {
+   758→  return (
+   759→    <Canvas
+   760→      shadows
+   761→      dpr={[1, 2]}
+   762→      gl={{ preserveDrawingBuffer: true, antialias: true }}
+   763→      camera={{ fov: 45, position: [28, 18, 28], near: 0.5, far: 500 }}
+   764→      style={{ width: "100%", height: "100%" }}
+   765→    >
+   766→      <SceneContent />
+   767→    </Canvas>
+   768→  );
+   769→}
+   770→

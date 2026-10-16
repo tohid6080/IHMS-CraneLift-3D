@@ -15,6 +15,7 @@ import type {
   LoadChart,
 } from "./types";
 import { getActivePage, lookupJibCapacity } from "./load-charts";
+import { effectiveRope } from "./wire-rope";
 
 // ───────────────────────── ابزار ریاضی ─────────────────────────
 const D2R = Math.PI / 180;
@@ -264,9 +265,26 @@ export function analyzeLift(
     }
   }
 
-  const effective = rated !== null ? rated / Math.max(inputs.safetyFactor, 1) : null;
+  const effectiveBase = rated !== null ? rated / Math.max(inputs.safetyFactor, 1) : null;
+
+  // ── سیم بکسل و قرقره (تعداد رشته در قلاب) ──
+  const rope = effectiveRope(crane, inputs);
+  const ropeLimited = rope.parts * rope.swlT; // ظرفیت قلاب محدود به سیم بکسل
+  const effective =
+    effectiveBase !== null ? Math.min(effectiveBase, ropeLimited) : null;
   const utilization =
     effective !== null ? (grossLoadT / effective) * 100 : null;
+  const linePull = grossLoadT / rope.parts; // کشش هر رشته
+  const ropeUtil = rope.swlT > 0 ? (linePull / rope.swlT) * 100 : null;
+  if (effectiveBase !== null && ropeLimited < effectiveBase - 0.05) {
+    warnings.push({
+      level: "info",
+      code: "ROPE_LIMITED",
+      message: `ظرفیت قلاب توسط سیم بکسل محدود شد: ${rope.parts} رشته × SWL ${rope.swlT.toFixed(
+        2
+      )} تن = ${ropeLimited.toFixed(1)} تن (کمتر از ظرفیت لودچارت ${effectiveBase.toFixed(1)} تن).`,
+    });
+  }
 
   // ── گشتاور ──
   const radius = geo.ok ? geo.radiusM : NaN;
@@ -349,6 +367,33 @@ export function analyzeLift(
       message:
         "شعاع از حداقل شعاع لودچارت کمتر است؛ ظرفیت با نقطه مرزی جدول تخمین زده شد.",
     });
+  }
+
+  // ۱-۲) سیم بکسل: کشش هر رشته در برابر SWL (MBL ÷ ۵)
+  if (ropeUtil !== null) {
+    checks.push({
+      label: `سیم بکسل — قرقره ${rope.parts} رشته × ${rope.diameterMm}mm`,
+      value: `کشش هر رشته ${linePull.toFixed(2)} تن`,
+      limit: `SWL هر رشته ${rope.swlT.toFixed(2)} تن (MBL ${rope.mblT.toFixed(1)} ÷ ۵)`,
+      level: ropeUtil > 100 ? "fail" : ropeUtil >= 85 ? "warn" : "pass",
+    });
+    if (ropeUtil > 100) {
+      warnings.push({
+        level: "danger",
+        code: "ROPE_LINE_PULL",
+        message: `کشش هر رشته سیم بکسل (${linePull.toFixed(
+          2
+        )} تن) از ظرفیت کاری آن (${rope.swlT.toFixed(
+          2
+        )} تن) بیشتر است — لیفت غیرمجاز. تعداد رشته‌های قرقره را افزایش دهید یا سیم قوی‌تر ببندید.`,
+      });
+    } else if (ropeUtil >= 85) {
+      warnings.push({
+        level: "warning",
+        code: "ROPE_NEAR",
+        message: "کشش هر رشته سیم بکسل نزدیک حد کاری است؛ تعداد رشته‌ها را بیشتر کنید.",
+      });
+    }
   }
 
   // ۲) گشتاور
@@ -565,6 +610,11 @@ export function analyzeLift(
     hookHeightMarginM: hookMargin,
     slingTensionT: slingTension,
     slingLoadFactorPct: slingFactor * 100,
+    partsOfLine: rope.parts,
+    ropeLimitedCapacityT: ropeLimited,
+    linePullPerPartT: linePull,
+    ropeSWLT: rope.swlT,
+    ropeUtilizationPct: ropeUtil,
     windRatioPct: windRatio,
     warnings,
     checks,

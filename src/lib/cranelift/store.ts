@@ -14,7 +14,18 @@ import type {
   LiftInputs,
   LoadChart,
   ProjectMeta,
+  TransferResult,
 } from "./types";
+import {
+  consumeQuota,
+  DEFAULT_LICENSE,
+  freshUsage,
+  isValidCode,
+  todayKey,
+  type LicenseState,
+  type QuotaKind,
+  type UsageCounters,
+} from "./licensing";
 
 /** ساخت شناسه یکتا برای جرثقیل سفارشی */
 export function makeCustomCraneId(name: string): string {
@@ -73,6 +84,8 @@ export const DEFAULT_INPUTS: LiftInputs = {
   hookBlockWeightT: 0.5,
   riggingWeightT: 0.2,
   rigging: { slingCount: 4, slingAngleDeg: 60, useSpreader: false },
+  partsOfLine: 8,
+  ropeOverrideMblT: null,
   radiusMode: "radius",
   radiusM: 12,
   boomAngleDeg: 60,
@@ -81,6 +94,8 @@ export const DEFAULT_INPUTS: LiftInputs = {
   jibLengthM: 12,
   jibAngleDeg: 30,
   requiredHookHeightM: 10,
+  pickHeightM: 1.2,
+  placeHeightM: 0,
   slewAngleDeg: 45,
   windSpeedMs: 6,
   windGust: false,
@@ -89,6 +104,12 @@ export const DEFAULT_INPUTS: LiftInputs = {
   obstacle: { enabled: false, xM: 18, zM: 8, heightM: 10, widthM: 4 },
   notes: "",
 };
+
+/** نقطه روی زمین صحنه سه‌بعدی (متر) */
+export interface GroundPoint {
+  x: number;
+  z: number;
+}
 
 /** متادیتای پیش‌فرض پروژه */
 function defaultMeta(): ProjectMeta {
@@ -138,6 +159,24 @@ interface CraneLiftState {
   // ── نتیجه تحلیل ──
   result: AnalysisResult | null;
   setResult: (r: AnalysisResult | null) => void;
+
+  // ── پرچم‌های برداشت/جایگذاری (نقاط A و B) ──
+  pickPoint: GroundPoint | null;
+  placePoint: GroundPoint | null;
+  setPickPoint: (p: GroundPoint) => void;
+  setPlacePoint: (p: GroundPoint) => void;
+  clearFlags: () => void;
+
+  // ── لایسنس و سهمیه نسخه رایگان ──
+  license: LicenseState;
+  activate: (code: string) => boolean;
+  deactivate: () => void;
+  usage: UsageCounters;
+  consume: (kind: QuotaKind) => void;
+
+  // ── نتیجه شبیه‌سازی جابجایی دوعرچه‌ای ──
+  transfer: TransferResult | null;
+  setTransfer: (t: TransferResult | null) => void;
 
   // ── تصاویر (persist نمی‌شوند) ──
   screenshot3D: string | null;
@@ -238,6 +277,42 @@ export const useLiftStore = create<CraneLiftState>()(
       result: null,
       setResult: (r) => set({ result: r }),
 
+      // پرچم‌ها — نقطه برداشت شعاع کاری را همزمان به‌روز می‌کند
+      pickPoint: null,
+      placePoint: null,
+      setPickPoint: (p) =>
+        set({
+          pickPoint: p,
+          inputs: {
+            ...get().inputs,
+            radiusMode: "radius",
+            radiusM: Math.round(Math.hypot(p.x, p.z) * 10) / 10,
+          },
+        }),
+      setPlacePoint: (p) => set({ placePoint: p }),
+      clearFlags: () => set({ pickPoint: null, placePoint: null }),
+
+      // لایسنس
+      license: DEFAULT_LICENSE,
+      activate: (code) => {
+        if (!isValidCode(code)) return false;
+        set({
+          license: {
+            plan: "pro",
+            code: code.trim().toUpperCase(),
+            activatedAt: new Date().toISOString(),
+          },
+        });
+        return true;
+      },
+      deactivate: () => set({ license: DEFAULT_LICENSE }),
+      usage: freshUsage(),
+      consume: (kind) => set({ usage: consumeQuota(get().license.plan, get().usage, kind) }),
+
+      // شبیه‌سازی جابجایی
+      transfer: null,
+      setTransfer: (t) => set({ transfer: t }),
+
       // تصاویر
       screenshot3D: null,
       setScreenshot3D: (s) => set({ screenshot3D: s }),
@@ -258,6 +333,10 @@ export const useLiftStore = create<CraneLiftState>()(
           result: null,
           screenshot3D: null,
           chartImage: null,
+          pickPoint: null,
+          placePoint: null,
+          transfer: null,
+          usage: freshUsage(),
         }),
     }),
     {
@@ -280,10 +359,19 @@ export function useHydrateLiftStore(): boolean {
   const hydrated = useLiftStore((s) => s.hydrated);
   const setHydrated = useLiftStore((s) => s.setHydrated);
   if (typeof window !== "undefined" && !hydrated && !useLiftStore.persist.hasHydrated()) {
-    // rehydrate دستی
-    void Promise.resolve(useLiftStore.persist.rehydrate()).then(() =>
-      setHydrated(true)
-    );
+    // rehydrate دستی + ادغام فیلدهای جدید با پیش‌فرض‌ها (سازگاری نسخه‌های قدیمی)
+    void Promise.resolve(useLiftStore.persist.rehydrate()).then(() => {
+      const st = useLiftStore.getState();
+      useLiftStore.setState({
+        inputs: { ...DEFAULT_INPUTS, ...(st.inputs ?? {}) },
+        license: { ...DEFAULT_LICENSE, ...(st.license ?? {}) },
+        usage: st.usage?.date === todayKey() ? st.usage : freshUsage(),
+        transfer: st.transfer ?? null,
+        pickPoint: st.pickPoint ?? null,
+        placePoint: st.placePoint ?? null,
+      });
+      setHydrated(true);
+    });
   }
   return hydrated;
 }

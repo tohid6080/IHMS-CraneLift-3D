@@ -31,6 +31,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { CRANES, getCraneById } from "@/lib/cranelift/cranes";
 import { getChartFor } from "@/lib/cranelift/load-charts";
+import { ropeSpecOf } from "@/lib/cranelift/wire-rope";
 import { useLiftStore } from "@/lib/cranelift/store";
 import {
   CRANE_TYPE_LABELS,
@@ -65,6 +66,8 @@ function fitInputsToCrane(
       crane.type === "tower"
         ? Math.min((s.freestandingHookHeightM ?? 40) * 0.35, 22)
         : 10,
+    partsOfLine: ropeSpecOf(crane).maxPartsOfLine, // قرقره کامل پیش‌فرض
+    ropeOverrideMblT: null, // بازگشت به سیم پیش‌فرض جرثقیل
   });
 }
 

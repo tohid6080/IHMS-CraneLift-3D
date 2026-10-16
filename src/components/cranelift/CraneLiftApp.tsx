@@ -26,6 +26,8 @@ import {
   ChevronRight,
   ChevronLeft,
   Loader2,
+  Cable,
+  Crown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -41,6 +43,10 @@ import Step6Report from "./steps/Step6Report";
 import ScenePanel from "./ScenePanel";
 import LoadChartCurve from "./LoadChartCurve";
 import LmiStatusBar from "./LmiStatusBar";
+import RopeCalculatorDialog from "./RopeCalculatorDialog";
+import UpgradeDialog from "./UpgradeDialog";
+import { useUiStore } from "./ui-store";
+import { quotaCheck } from "@/lib/cranelift/licensing";
 
 const STEPS = [
   { title: "انتخاب جرثقیل", icon: Truck },
@@ -100,6 +106,13 @@ function CraneLiftAppInner() {
   const inputs = useLiftStore((s) => s.inputs);
   const result = useLiftStore((s) => s.result);
   const resetAll = useLiftStore((s) => s.resetAll);
+  const license = useLiftStore((s) => s.license);
+  const usage = useLiftStore((s) => s.usage);
+  const consume = useLiftStore((s) => s.consume);
+  const ropeOpen = useUiStore((s) => s.ropeOpen);
+  const setRopeOpen = useUiStore((s) => s.setRopeOpen);
+  const upgradeOpen = useUiStore((s) => s.upgradeOpen);
+  const setUpgradeOpen = useUiStore((s) => s.setUpgradeOpen);
 
   const crane = getCraneById(selectedCraneId, customCranes);
   const chart = crane ? getChartFor(crane.id, customCharts) : null;
@@ -127,6 +140,22 @@ function CraneLiftAppInner() {
   const handleReset = () => {
     resetAll();
     toast({ title: "پروژه جدید آغاز شد" });
+  };
+
+  /** باز کردن محاسبه‌گر سیم بکسل با کنترل سهمیه نسخه رایگان */
+  const handleRopeTool = () => {
+    const q = quotaCheck(license.plan, usage, "rope");
+    if (!q.ok) {
+      toast({
+        title: "سهمیه محاسبه‌گر سیم بکسل امروز تمام شد",
+        description: `سقف نسخه رایگان: ${q.limit} بار در روز. برای استفاده نامحدود، ارتقا دهید.`,
+        variant: "destructive",
+      });
+      setUpgradeOpen(true);
+      return;
+    }
+    consume("rope");
+    setRopeOpen(true);
   };
 
   if (!hydrated) return <Splash />;
@@ -210,8 +239,44 @@ function CraneLiftAppInner() {
             </ol>
           </nav>
 
-          {/* تم و ریست — انتهای نوار (هم‌ارتفاع کاشی‌ها) */}
+          {/* ابزارها و تم و ریست — انتهای نوار (هم‌ارتفاع کاشی‌ها) */}
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+            {/* محاسبه‌گر سیم بکسل */}
+            <button
+              type="button"
+              aria-label="محاسبه‌گر تناژ سیم بکسل"
+              title="محاسبه‌گر تناژ سیم بکسل (مغزکنفی / مغزفولادی)"
+              onClick={handleRopeTool}
+              className={`${TILE_SIZE} flex flex-col items-center justify-center gap-0.5 rounded-lg border-2 border-border text-muted-foreground transition-colors hover:border-amber-500/50 hover:text-amber-500`}
+            >
+              <Cable className="size-6" />
+              <span className="text-[10px] font-medium leading-none">سیم بکسل</span>
+            </button>
+            {/* ارتقا / وضعیت پلن */}
+            <button
+              type="button"
+              aria-label={license.plan === "pro" ? "پلن حرفه‌ای فعال است" : "ارتقا به نسخه حرفه‌ای"}
+              title={
+                license.plan === "pro"
+                  ? `نسخه حرفه‌ای فعال — کد ${license.code ?? ""}`
+                  : "ارتقا به نسخه حرفه‌ای (پلن‌ها و فعال‌سازی)"
+              }
+              onClick={() => setUpgradeOpen(true)}
+              className={`${TILE_SIZE} flex flex-col items-center justify-center gap-0.5 rounded-lg border-2 transition-colors ${
+                license.plan === "pro"
+                  ? "border-green-500/50 text-green-500"
+                  : "border-amber-500/60 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 dark:text-amber-400"
+              }`}
+            >
+              {license.plan === "pro" ? (
+                <CheckCircle2 className="size-6" />
+              ) : (
+                <Crown className="size-6" />
+              )}
+              <span className="text-[10px] font-medium leading-none">
+                {license.plan === "pro" ? "Pro فعال" : "ارتقا"}
+              </span>
+            </button>
             <ThemeToggle />
             <button
               type="button"
@@ -305,6 +370,10 @@ function CraneLiftAppInner() {
           </div>
         </div>
       </footer>
+
+      {/* ═══ دیالوگ‌های سراسری ═══ */}
+      <RopeCalculatorDialog open={ropeOpen} onOpenChange={setRopeOpen} />
+      <UpgradeDialog open={upgradeOpen} onOpenChange={setUpgradeOpen} />
     </div>
   );
 }

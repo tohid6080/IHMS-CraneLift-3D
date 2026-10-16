@@ -39,11 +39,13 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { makeCustomCraneId, useLiftStore } from "@/lib/cranelift/store";
+import { ropeMBLT, ropeSpecOf, ROPE_CORE_LABELS } from "@/lib/cranelift/wire-rope";
 import {
   CRANE_TYPE_LABELS,
   type Crane,
   type CraneSpecs,
   type CraneType,
+  type RopeCore,
 } from "@/lib/cranelift/types";
 import { useToast } from "@/hooks/use-toast";
 
@@ -93,6 +95,10 @@ interface CraneDraft {
   maxRadiusM: string;
   jibCapacityFactor: string;
   freestandingHookHeightM: string;
+  maxPartsOfLine: string;
+  ropeDiameterMm: string;
+  ropeMBLT: string;
+  ropeCore: RopeCore;
 }
 
 function defaultDraft(): CraneDraft {
@@ -119,6 +125,10 @@ function defaultDraft(): CraneDraft {
     maxRadiusM: "",
     jibCapacityFactor: "0.75",
     freestandingHookHeightM: "40",
+    maxPartsOfLine: "8",
+    ropeDiameterMm: "20",
+    ropeMBLT: "",
+    ropeCore: "IWRC",
   };
 }
 
@@ -148,6 +158,11 @@ function draftFromCrane(crane: Crane): CraneDraft {
     jibCapacityFactor: String(s.jibCapacityFactor),
     freestandingHookHeightM:
       s.freestandingHookHeightM != null ? String(s.freestandingHookHeightM) : "40",
+    // سیم بکسل: از مشخصات ذخیره‌شده یا تخمین موتور سیم
+    maxPartsOfLine: String(s.maxPartsOfLine ?? ropeSpecOf(crane).maxPartsOfLine),
+    ropeDiameterMm: String(s.ropeDiameterMm ?? ropeSpecOf(crane).diameterMm),
+    ropeMBLT: s.ropeMBLT != null ? String(s.ropeMBLT) : "",
+    ropeCore: s.ropeCore ?? ropeSpecOf(crane).core,
   };
 }
 
@@ -216,6 +231,21 @@ function buildSpecs(d: CraneDraft): CraneSpecs {
             Number.isFinite(fh) && fh > 0 ? round1(fh) : 40,
         }
       : {}),
+
+    // ── سیم بکسل و قرقره ──
+    maxPartsOfLine: clamp(Math.round(parseNum(d.maxPartsOfLine) || 8), 1, 16),
+    ropeDiameterMm: clamp(parseNum(d.ropeDiameterMm) || 20, 6, 60),
+    ropeCore: d.ropeCore,
+    ropeMBLT:
+      Number.isFinite(parseNum(d.ropeMBLT)) && parseNum(d.ropeMBLT) > 0
+        ? round1(parseNum(d.ropeMBLT))
+        : round1(
+            ropeMBLT(
+              clamp(parseNum(d.ropeDiameterMm) || 20, 6, 60),
+              "6x36",
+              d.ropeCore
+            )
+          ),
   };
 }
 
@@ -714,6 +744,68 @@ function CraneForm({
                   />
                 </>
               )}
+            </div>
+
+            {/* سیم بکسل و قرقره — برای تحلیل ظرفیت قلاب و گزارش */}
+            <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+              <div className="text-xs font-bold text-amber-600 dark:text-amber-400">
+                سیم بکسل وینچ و تعداد رشته قلاب (قرقره)
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <NumField
+                  label="حداکثر رشته قلاب"
+                  unit="رشته"
+                  value={draft.maxPartsOfLine}
+                  onChange={(v) => set("maxPartsOfLine", v)}
+                  min={1}
+                  max={16}
+                />
+                <NumField
+                  label="قطر سیم"
+                  unit="mm"
+                  value={draft.ropeDiameterMm}
+                  onChange={(v) => set("ropeDiameterMm", v)}
+                  min={6}
+                  max={60}
+                />
+                <NumField
+                  label="MBL سیم"
+                  unit="تن"
+                  value={draft.ropeMBLT}
+                  onChange={(v) => set("ropeMBLT", v)}
+                  placeholder="خودکار"
+                  min={0}
+                  step={0.1}
+                  helper={
+                    draft.ropeMBLT
+                      ? undefined
+                      : `تخمین: ${ropeMBLT(
+                          Math.max(6, parseNum(draft.ropeDiameterMm) || 20),
+                          "6x36",
+                          draft.ropeCore
+                        ).toFixed(1)} تن`
+                  }
+                />
+                <div className="space-y-1.5">
+                  <Label className="text-xs">نوع مغز سیم</Label>
+                  <Select
+                    value={draft.ropeCore}
+                    onValueChange={(v) => set("ropeCore", v as RopeCore)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="FC">{ROPE_CORE_LABELS.FC}</SelectItem>
+                      <SelectItem value="IWRC">{ROPE_CORE_LABELS.IWRC}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                اگر MBL را خالی بگذارید، از قطر و نوع مغز تخمین زده می‌شود. این مقادیر در بررسی
+                ظرفیت قلاب، تحلیل و گزارش PDF استفاده می‌شوند.
+              </p>
             </div>
 
             {/* ضریب کاهش جیب — فقط غیربرجی */}

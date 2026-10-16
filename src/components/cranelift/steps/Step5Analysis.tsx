@@ -20,6 +20,8 @@ import {
   Wind,
   Info,
   Loader2,
+  Cable,
+  Flag,
 } from "lucide-react";
 import {
   RadialBar,
@@ -43,6 +45,7 @@ import { useLiftStore } from "@/lib/cranelift/store";
 import { getCraneById } from "@/lib/cranelift/cranes";
 import { STATUS_COLORS, STATUS_LABELS } from "@/lib/cranelift/analysis";
 import { runAnalysis } from "../run-analysis";
+import TransferVerdictCard from "../TransferVerdictCard";
 import { useToast } from "@/hooks/use-toast";
 import type { AnalysisWarning } from "@/lib/cranelift/types";
 
@@ -88,6 +91,7 @@ export default function Step5Analysis() {
   const selectedId = useLiftStore((s) => s.selectedCraneId);
   const result = useLiftStore((s) => s.result);
   const radiusM = useLiftStore((s) => s.inputs.radiusM);
+  const transfer = useLiftStore((s) => s.transfer);
   const setStep = useLiftStore((s) => s.setStep);
 
   const customCranes = useLiftStore((s) => s.customCranes);
@@ -226,6 +230,57 @@ export default function Step5Analysis() {
               </CardContent>
             </Card>
           </div>
+
+          {/* سیم بکسل و قرقره */}
+          {result && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Cable className="size-4 text-amber-500" />
+                  سیم بکسل و تعداد رشته قلاب
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3 sm:grid-cols-4">
+                  <div className="rounded-lg border bg-muted/40 p-3 text-center">
+                    <div className="text-[11px] text-muted-foreground">رشته‌های در قلاب</div>
+                    <div className="mt-1 text-xl font-black" dir="ltr">
+                      {result.partsOfLine}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border bg-muted/40 p-3 text-center">
+                    <div className="text-[11px] text-muted-foreground">کشش هر رشته</div>
+                    <div className="mt-1 text-xl font-black" dir="ltr">
+                      {result.linePullPerPartT != null ? `${result.linePullPerPartT.toFixed(2)} t` : "—"}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border bg-muted/40 p-3 text-center">
+                    <div className="text-[11px] text-muted-foreground">SWL هر رشته (MBL÷۵)</div>
+                    <div className="mt-1 text-xl font-black text-green-500" dir="ltr">
+                      {result.ropeSWLT != null ? `${result.ropeSWLT.toFixed(2)} t` : "—"}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border bg-muted/40 p-3 text-center">
+                    <div className="text-[11px] text-muted-foreground">ظرفیت محدود به سیم</div>
+                    <div className="mt-1 text-xl font-black" dir="ltr">
+                      {result.ropeLimitedCapacityT != null ? `${result.ropeLimitedCapacityT.toFixed(1)} t` : "—"}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* نتیجه جابجایی دوپرچمی (در صورت اجرای شبیه‌سازی) */}
+          {transfer && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm font-bold text-muted-foreground">
+                <Flag className="size-4 text-amber-500" />
+                خلاصه شبیه‌سازی جابجایی دوعرچه‌ای
+              </div>
+              <TransferVerdictCard transfer={transfer} />
+            </div>
+          )}
 
           <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
             {/* گیج ظرفیت */}

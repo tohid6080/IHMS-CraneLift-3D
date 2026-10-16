@@ -18,6 +18,13 @@ import {
   RotateCw,
   Box,
   Info,
+  MapPin,
+  Flag,
+  Play,
+  Square,
+  Trash2,
+  Lock,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +34,11 @@ import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { useLiftStore } from "@/lib/cranelift/store";
 import { useView3D } from "../three/view3d-store";
+import { useSim } from "../three/sim-store";
+import { useUiStore } from "../ui-store";
+import { startTransferSim, stopTransferSim } from "../run-analysis";
+import TransferVerdictCard from "../TransferVerdictCard";
+import { isPro } from "@/lib/cranelift/licensing";
 import { captureScene } from "@/lib/cranelift/capture";
 import { useToast } from "@/hooks/use-toast";
 
@@ -37,6 +49,45 @@ export default function Step4Scene() {
   const setInputs = useLiftStore((s) => s.setInputs);
   const setObstacle = useLiftStore((s) => s.setObstacle);
   const setScreenshot3D = useLiftStore((s) => s.setScreenshot3D);
+  const pickPoint = useLiftStore((s) => s.pickPoint);
+  const placePoint = useLiftStore((s) => s.placePoint);
+  const setPickPoint = useLiftStore((s) => s.setPickPoint);
+  const setPlacePoint = useLiftStore((s) => s.setPlacePoint);
+  const clearFlags = useLiftStore((s) => s.clearFlags);
+  const transfer = useLiftStore((s) => s.transfer);
+  const license = useLiftStore((s) => s.license);
+  const simActive = useSim((s) => s.active);
+  const simPose = useSim((s) => s.pose);
+  const showVerdict = useSim((s) => s.showVerdict);
+  const speed = useSim((s) => s.speed);
+  const setSpeed = useSim((s) => s.setSpeed);
+  const setUpgradeOpen = useUiStore((s) => s.setUpgradeOpen);
+
+  const bothFlags = !!(pickPoint && placePoint);
+
+  const handleSim = () => {
+    if (!isPro(license)) {
+      toast({
+        title: "شبیه‌سازی حرکت مخصوص نسخه حرفه‌ای است",
+        description: "پس از فعال‌سازی Pro، حرکت کامل جرثقیل بین دو پرچم نمایش داده می‌شود.",
+        variant: "destructive",
+      });
+      setUpgradeOpen(true);
+      return;
+    }
+    if (!bothFlags) {
+      toast({
+        title: "ابتدا هر دو پرچم را ثبت کنید",
+        description: "پرچم A (برداشت) و پرچم B (جایگذاری) را روی زمین بگذارید.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const st = startTransferSim();
+    if (st === "started") {
+      toast({ title: "حرکت جرثقیل آغاز شد", description: "برداشت از A و جایگذاری در B را تماشا کنید." });
+    }
+  };
 
   const handleScreenshot = () => {
     const shot = captureScene();
@@ -61,6 +112,180 @@ export default function Step4Scene() {
 
   return (
     <div className="space-y-4">
+      {/* پرچم‌های برداشت و جایگذاری + شبیه‌سازی حرکت */}
+      <Card className="border-amber-500/40">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Flag className="size-5 text-amber-500" />
+            پرچم‌های برداشت و جایگذاری
+          </CardTitle>
+          <CardDescription>
+            نقطه برداشت (A) و نقطه جایگذاری (B) را روی زمین صحنه سه‌بعدی کلیک کنید؛ سپس Play را
+            بزنید تا حرکت کامل جرثقیل شبیه‌سازی شود.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Button
+              variant={view.flagMode === "pick" ? "default" : "outline"}
+              className={`h-12 gap-2 ${
+                view.flagMode === "pick" ? "bg-amber-500 text-black hover:bg-amber-400" : ""
+              }`}
+              onClick={() => view.setFlagMode(view.flagMode === "pick" ? "off" : "pick")}
+              aria-pressed={view.flagMode === "pick"}
+            >
+              <MapPin className="size-4" />
+              {view.flagMode === "pick" ? "روی زمین کلیک کنید..." : "پرچم A — نقطه برداشت"}
+            </Button>
+            <Button
+              variant={view.flagMode === "place" ? "default" : "outline"}
+              className={`h-12 gap-2 ${
+                view.flagMode === "place"
+                  ? "border-2 border-emerald-500 bg-emerald-500 text-black hover:bg-emerald-400"
+                  : ""
+              }`}
+              onClick={() => view.setFlagMode(view.flagMode === "place" ? "off" : "place")}
+              aria-pressed={view.flagMode === "place"}
+            >
+              <MapPin className="size-4" />
+              {view.flagMode === "place" ? "روی زمین کلیک کنید..." : "پرچم B — نقطه جایگذاری"}
+            </Button>
+          </div>
+
+          {/* وضعیت پرچم‌ها */}
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="rounded-lg border bg-muted/40 p-2.5 text-xs">
+              <span className="font-bold text-amber-500">پرچم A: </span>
+              {pickPoint ? (
+                <span dir="ltr">
+                  ({pickPoint.x.toFixed(1)}, {pickPoint.z.toFixed(1)}) — R =
+                  {Math.hypot(pickPoint.x, pickPoint.z).toFixed(1)} m
+                </span>
+              ) : (
+                <span className="text-muted-foreground">ثبت نشده</span>
+              )}
+            </div>
+            <div className="rounded-lg border bg-muted/40 p-2.5 text-xs">
+              <span className="font-bold text-emerald-500">پرچم B: </span>
+              {placePoint ? (
+                <span dir="ltr">
+                  ({placePoint.x.toFixed(1)}, {placePoint.z.toFixed(1)}) — R =
+                  {Math.hypot(placePoint.x, placePoint.z).toFixed(1)} m
+                </span>
+              ) : (
+                <span className="text-muted-foreground">ثبت نشده</span>
+              )}
+            </div>
+          </div>
+
+          {/* ارتفاع برداشت و جایگذاری */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="pick-h" className="text-xs">
+                ارتفاع بار هنگام برداشت (مثلاً روی تریلی)
+              </Label>
+              <Input
+                id="pick-h"
+                type="number"
+                dir="ltr"
+                className="h-9 text-center"
+                min={0}
+                max={20}
+                step={0.1}
+                value={inputs.pickHeightM}
+                onChange={(e) => setInputs({ pickHeightM: Math.max(0, Number(e.target.value) || 0) })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="place-h" className="text-xs">
+                ارتفاع جایگذاری بار (نقطه B)
+              </Label>
+              <Input
+                id="place-h"
+                type="number"
+                dir="ltr"
+                className="h-9 text-center"
+                min={0}
+                max={60}
+                step={0.1}
+                value={inputs.placeHeightM}
+                onChange={(e) => setInputs({ placeHeightM: Math.max(0, Number(e.target.value) || 0) })}
+              />
+            </div>
+          </div>
+
+          {/* کنترل شبیه‌سازی */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="lg"
+              className="h-12 flex-1 gap-2 bg-amber-500 text-black hover:bg-amber-400"
+              onClick={handleSim}
+              disabled={simActive}
+            >
+              {simActive ? <Loader2 className="size-5 animate-spin" /> : <Play className="size-5 fill-black" />}
+              {simActive ? "جرثقیل در حال حرکت..." : "شبیه‌سازی حرکت A → B"}
+              {!isPro(license) && <Lock className="size-4" />}
+            </Button>
+            {simActive && (
+              <Button size="lg" variant="destructive" className="h-12 gap-2" onClick={stopTransferSim}>
+                <Square className="size-4" />
+                توقف
+              </Button>
+            )}
+            {(pickPoint || placePoint) && (
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-12 gap-2"
+                onClick={() => {
+                  clearFlags();
+                  stopTransferSim();
+                }}
+              >
+                <Trash2 className="size-4" />
+                حذف پرچم‌ها
+              </Button>
+            )}
+          </div>
+
+          {/* سرعت پخش + وضعیت زنده */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 p-2.5">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-muted-foreground">سرعت پخش:</span>
+              {[1, 2, 4].map((sp) => (
+                <Button
+                  key={sp}
+                  size="sm"
+                  variant={speed === sp ? "default" : "outline"}
+                  className={`h-7 px-2.5 ${speed === sp ? "bg-amber-500 text-black hover:bg-amber-400" : ""}`}
+                  onClick={() => setSpeed(sp)}
+                  dir="ltr"
+                >
+                  ×{sp}
+                </Button>
+              ))}
+            </div>
+            {simPose && (
+              <div className="text-xs text-muted-foreground" dir="ltr">
+                {simPose.phaseLabel} — R {simPose.radiusM.toFixed(1)}m · Boom
+                {simPose.boomDeg.toFixed(0)}° · Hook {simPose.hookTopY.toFixed(1)}m
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+            <Info className="mt-0.5 size-4 shrink-0 text-amber-500" />
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              شعاع نقطه برداشت (A) به‌صورت خودکار در «شعاع کاری» مرحله ۳ ثبت می‌شود. هر دو نقطه با
+              موتور تحلیل بررسی می‌شوند و در پایان حرکت، نتیجه «مجاز / غیرمجاز» با ذکر محل مشکل و
+              راهکار اصلاح نمایش داده می‌شود.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* نتیجه شبیه‌سازی پس از پایان حرکت */}
+      {showVerdict && transfer && <TransferVerdictCard transfer={transfer} />}
       {/* کلیدهای نمایش */}
       <Card>
         <CardHeader className="pb-3">

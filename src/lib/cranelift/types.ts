@@ -8,6 +8,12 @@
 /** نوع جرثقیل */
 export type CraneType = "mobile" | "crawler" | "tower";
 
+/** نوع مغز سیم بکسل: کنفی (FC) یا فولادی (IWRC) */
+export type RopeCore = "FC" | "IWRC";
+
+/** ساختار سیم بکسل */
+export type RopeConstruction = "6x19" | "6x36" | "8x19" | "8x36";
+
 /** برچسب‌های فارسی نوع جرثقیل */
 export const CRANE_TYPE_LABELS: Record<CraneType, string> = {
   mobile: "جرثقیل سیار (All-Terrain)",
@@ -34,6 +40,12 @@ export interface CraneSpecs {
   freestandingHookHeightM?: number; // ارتفاع آزاد قلاب (فقط جرثقیل برجی)
   minRadiusM: number; // حداقل شعاع کاری
   maxRadiusM: number; // حداکثر شعاع کاری
+
+  // ── سیم بکسل و قرقره (اختیاری — برای جرثقیل‌های سفارشی قدیمی undefined است) ──
+  maxPartsOfLine?: number; // حداکثر تعداد رشته سیم بکسل در قلاب
+  ropeDiameterMm?: number; // قطر سیم بکسل وینچ (میلی‌متر)
+  ropeMBLT?: number; // حداقل نیروی گسیختگی سیم (MBL — تن)
+  ropeCore?: RopeCore; // نوع مغز سیم بکسل
 }
 
 /** مدل جرثقیل */
@@ -138,6 +150,10 @@ export interface LiftInputs {
   // ── ریگینگ ──
   rigging: RiggingConfig;
 
+  // ── سیم بکسل و قرقره ──
+  partsOfLine: number; // تعداد رشته سیم بکسل در قلاب (۰ = حداکثر جرثقیل)
+  ropeOverrideMblT: number | null; // MBL سیم از محاسبه‌گر سیم بکسل (null = سیم پیش‌فرض جرثقیل)
+
   // ── هندسه بوم ──
   radiusMode: "radius" | "angle"; // ورودی بر اساس شعاع یا زاویه
   radiusM: number; // شعاع کاری (متر)
@@ -149,6 +165,8 @@ export interface LiftInputs {
 
   // ── ارتفاع ──
   requiredHookHeightM: number; // ارتفاع قلاب مورد نیاز (از سطح زمین تا زیر قلاب)
+  pickHeightM: number; // ارتفاع بار هنگام برداشت در نقطه A (مثلاً روی تریلی)
+  placeHeightM: number; // ارتفاع جایگذاری بار در نقطه B
 
   // ── شرایط محیطی و ایمنی ──
   slewAngleDeg: number; // زاویه چرخش سوپراستراکچر (برای نمایش سه‌بعدی)
@@ -210,6 +228,13 @@ export interface AnalysisResult {
   slingTensionT: number | null; // نیروی هر اسلینگ
   slingLoadFactorPct: number | null; // ضریب بار اسلینگ (1/sin β) ٪
 
+  // سیم بکسل و قرقره
+  partsOfLine: number; // تعداد رشته فعال در قلاب
+  ropeLimitedCapacityT: number | null; // ظرفیت محدودشده به سیم بکسل (رشته × SWL)
+  linePullPerPartT: number | null; // کشش هر رشته سیم
+  ropeSWLT: number | null; // ظرفیت کاری هر رشته (MBL ÷ ۵)
+  ropeUtilizationPct: number | null; // درصد استفاده از ظرفیت سیم
+
   // باد
   windRatioPct: number | null; // نسبت باد به حد مجاز
 
@@ -247,6 +272,37 @@ export interface GeometrySolution {
   tipHeightM: number;
 }
 
+/** نتیجه تحلیل یک نقطه (برداشت یا جایگذاری) در جابجایی دوپرچمی */
+export interface TransferPointResult {
+  point: "A" | "B";
+  title: string; // «برداشت» یا «جایگذاری»
+  worldX: number;
+  worldZ: number;
+  radiusM: number; // شعاع از مرکز دوران
+  azimuthDeg: number; // آزیموت جهانی (درجه)
+  boomAngleDeg: number | null;
+  tipHeightM: number | null;
+  result: AnalysisResult;
+}
+
+/** یک ایراد/مشکل جابجایی با راهکار اصلاح */
+export interface TransferIssue {
+  point: "A" | "B" | "GLOBAL";
+  level: WarningLevel;
+  code: string;
+  message: string;
+  fix: string; // راهکار اصلاحی پیشنهادی
+}
+
+/** نتیجه کامل شبیه‌سازی جابجایی دوعرشه‌ای (A → B) */
+export interface TransferResult {
+  status: "allowed" | "caution" | "not-allowed";
+  checkedAt: string; // ISO
+  points: TransferPointResult[];
+  issues: TransferIssue[];
+  conclusion: string;
+}
+
 /** داده‌های گزارش PDF */
 export interface ReportData {
   meta: ProjectMeta;
@@ -256,4 +312,6 @@ export interface ReportData {
   result: AnalysisResult | null;
   screenshot3D: string | null; // dataURL تصویر صحنه
   chartImage: string | null; // dataURL تصویر منحنی لودچارت
+  transfer?: TransferResult | null; // نتیجه شبیه‌سازی جابجایی دوعرچه‌ای
+  planType?: "free" | "pro"; // نوع لایسنس (برای واترمارک نسخه رایگان)
 }
