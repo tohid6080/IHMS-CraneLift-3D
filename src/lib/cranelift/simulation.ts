@@ -1,5 +1,5 @@
 /**
- * CraneLift Pro 3D — موتور شبیه‌سازی جابجایی دوعرشه‌ای (دو پرچم A → B)
+ * IHMS CraneLift 3D — موتور شبیه‌سازی جابجایی دوعرشه‌ای (دو پرچم A → B)
  * -----------------------------------------------------------
  * ۱) planTransfer: تحلیل کامل در «هر دو» نقطه (برداشت A و جایگذاری B)
  *    با استفاده از همان موتور analyzeLift + تجمیع ایرادها با راهکار اصلاحی.
@@ -76,13 +76,15 @@ function fixFor(code: string): string {
 /**
  * تحلیل کامل جابجایی از نقطه برداشت A تا نقطه جایگذاری B.
  * هر دو نقطه با موتور تحلیل اصلی بررسی می‌شوند (بدترین حالت = وضعیت کل).
+ * origin = موقعیت استقرار جرثقیل (شعاع/آزیموت نسبت به آن محاسبه می‌شود).
  */
 export function planTransfer(
   crane: Crane,
   chart: LoadChart | null,
   inputs: LiftInputs,
   pick: { x: number; z: number },
-  place: { x: number; z: number }
+  place: { x: number; z: number },
+  origin: { x: number; z: number } = { x: 0, z: 0 }
 ): TransferResult {
   const defs: {
     point: "A" | "B";
@@ -98,8 +100,10 @@ export function planTransfer(
   const issues: TransferIssue[] = [];
 
   for (const d of defs) {
-    const radiusM = Math.round(Math.hypot(d.p.x, d.p.z) * 10) / 10;
-    const azimuthDeg = (Math.atan2(d.p.z, d.p.x) * R2D + 360) % 360;
+    const relX = d.p.x - origin.x;
+    const relZ = d.p.z - origin.z;
+    const radiusM = Math.round(Math.hypot(relX, relZ) * 10) / 10;
+    const azimuthDeg = (Math.atan2(relZ, relX) * R2D + 360) % 360;
     // ارتفاع قلاب مورد نیاز در این نقطه = ارتفاع سطح + ارتفاع بار
     const pointInputs: LiftInputs = {
       ...inputs,

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * CraneLift Pro 3D — دیالوگ ارتقا (پلن‌ها + فعال‌سازی کد)
+ * IHMS CraneLift 3D — دیالوگ ارتقا (پلن‌ها + فعال‌سازی کد)
  * -----------------------------------------------------------
  * جدول مقایسه پلن‌ها (رایگان / حرفه‌ای / سازمانی) و ورود کد فعال‌سازی.
  * کدهای دمو داخل licensing.ts هستند؛ در نسخه تجاری جای اعتبارسنجی سروری می‌گیرد.
@@ -67,11 +67,11 @@ export default function UpgradeDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <Crown className="size-5 text-amber-500" />
-            ارتقای CraneLift Pro 3D
+            ارتقای IHMS CraneLift 3D
           </DialogTitle>
           <DialogDescription>
-            نسخه رایگان تا سقف مشخص کار می‌کند؛ برای شبیه‌سازی حرکت و گزارش نامحدود، پلن حرفه‌ای
-            را فعال کنید.
+            نسخه رایگان تا سقف روزانه کار می‌کند (۵ اجرای تحلیل+شبیه‌سازی، ۵ محاسبه سیم، ۱ گزارش با
+            واترمارک)؛ برای استفاده نامحدود و گزارش بدون واترمارک، پلن حرفه‌ای را فعال کنید.
           </DialogDescription>
         </DialogHeader>
 

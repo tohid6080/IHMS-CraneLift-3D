@@ -14,11 +14,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CraneLift Pro 3D — برنامه‌ریزی و تحلیل لیفت جرثقیل",
+  title: "IHMS CraneLift 3D — برنامه‌ریزی و تحلیل لیفت جرثقیل",
   description:
-    "اپلیکیشن حرفه‌ای برنامه‌ریزی لیفت جرثقیل: انتخاب از ۱۲ مدل واقعی، لودچارت تعاملی، شبیه‌سازی سه‌بعدی، تحلیل ایمنی و گزارش PDF حرفه‌ای.",
-  keywords: ["جرثقیل", "لیفت پلن", "لودچارت", "crane lift plan", "load chart", "3D crane"],
-  authors: [{ name: "CraneLift Pro" }],
+    "اپلیکیشن حرفه‌ای برنامه‌ریزی لیفت جرثقیل (IHMS): ۱۳ مدل واقعی + جرثقیل سفارشی، لودچارت جدولی کاتالوگی، صحنه سه‌بعدی با تجهیزات نیروگاه/پالایشگاه، جابه‌جایی جرثقیل، شبیه‌سازی حرکت دوپرچمی با یک دکمه Play، محاسبه‌گر سیم بکسل و گزارش PDF حرفه‌ای.",
+  keywords: ["جرثقیل", "لیفت پلن", "لودچارت", "IHMS", "HSE", "crane lift plan", "load chart", "3D crane"],
+  authors: [{ name: "IHMS — Integrated HSE Management System" }],
 };
 
 export const viewport: Viewport = {

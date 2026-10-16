@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * CraneLift Pro 3D — پوسته اصلی اپلیکیشن (استایل LMI)
+ * IHMS CraneLift 3D — پوسته اصلی اپلیکیشن (استایل LMI)
  * -----------------------------------------------------------
  * نوار ابزار بالایی به سبک نمایشگرهای صنعتی LMI: کاشی‌های مربعی
  * مراحل (کاشی فعال با حاشیه کهربایی درخشان) + لوگوی فشرده در ابتدا
@@ -12,7 +12,6 @@
 
 import { ThemeProvider, useTheme } from "next-themes";
 import {
-  HardHat,
   Truck,
   BarChart3,
   ClipboardList,
@@ -78,16 +77,26 @@ function ThemeToggle() {
   );
 }
 
-/** اسپلش تا هیدراته‌شدن استور از localStorage */
+/** اسپلش تا هیدراته‌شدن استور از localStorage — لوگوی بزرگ IHMS */
 function Splash() {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background">
-      <div className="flex size-16 animate-pulse items-center justify-center rounded-2xl bg-amber-500">
-        <HardHat className="size-9 text-black" />
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-background px-6">
+      <img
+        src="/logo.png"
+        alt="لوگوی IHMS — Integrated HSE Management System"
+        className="w-44 animate-pulse rounded-3xl shadow-[0_0_60px_rgba(20,83,45,0.35)] sm:w-56 md:w-64"
+      />
+      <div className="text-center">
+        <h1 className="text-3xl font-black tracking-tight sm:text-4xl" dir="ltr">
+          IHMS <span className="text-emerald-700 dark:text-emerald-400">CraneLift 3D</span>
+        </h1>
+        <p className="mt-1.5 text-xs font-medium text-muted-foreground sm:text-sm">
+          Integrated HSE Management System — برنامه‌ریزی و تحلیل لیفت جرثقیل
+        </p>
       </div>
-      <div className="flex items-center gap-2 text-muted-foreground">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="size-4 animate-spin" />
-        در حال بارگذاری CraneLift Pro 3D...
+        در حال بارگذاری IHMS CraneLift 3D...
       </div>
     </div>
   );
@@ -177,15 +186,17 @@ function CraneLiftAppInner() {
         <div className="mx-auto flex w-full max-w-[1400px] items-center gap-1.5 px-2 sm:gap-2.5 sm:px-4">
           {/* لوگوی فشرده — ابتدای نوار */}
           <div className="flex shrink-0 items-center gap-2 py-1.5">
-            <div className="flex size-9 items-center justify-center rounded-lg bg-amber-500 shadow-[0_0_16px_rgba(245,158,11,0.4)] sm:size-10">
-              <HardHat className="size-5 text-black sm:size-6" />
-            </div>
+            <img
+              src="/logo.png"
+              alt="لوگوی IHMS"
+              className="size-10 rounded-xl bg-white/90 object-contain shadow-sm ring-1 ring-slate-400/40 sm:size-11"
+            />
             <div className="hidden sm:block">
               <h1 className="text-sm font-black leading-tight" dir="ltr">
-                CraneLift <span className="text-amber-500">Pro 3D</span>
+                IHMS <span className="text-amber-500">CraneLift 3D</span>
               </h1>
               <p className="text-[10px] leading-tight text-muted-foreground">
-                برنامه‌ریزی و تحلیل لیفت جرثقیل
+                Integrated HSE Management System
               </p>
             </div>
           </div>
@@ -341,7 +352,7 @@ function CraneLiftAppInner() {
       <footer className="mt-auto border-t bg-card">
         <div className="mx-auto flex max-w-[1400px] flex-col items-center justify-between gap-2 px-4 py-3 sm:flex-row">
           <p className="text-center text-[11px] leading-relaxed text-muted-foreground sm:text-start">
-            CraneLift Pro 3D © ۲۰۲۵ — لودچارت‌های مرجع تقریبی و برای برنامه‌ریزی اولیه است؛
+            IHMS CraneLift 3D © ۲۰۲۵ — لودچارت‌های مرجع تقریبی و برای برنامه‌ریزی اولیه است؛
             پیش از لیفت واقعی، لودچارت رسمی سازنده ملاک عمل است.
           </p>
           <div className="flex items-center gap-2">

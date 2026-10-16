@@ -1,5 +1,5 @@
 /**
- * CraneLift Pro 3D — انواع داده (Types)
+ * IHMS CraneLift 3D — انواع داده (Types)
  * -----------------------------------------------------------
  * تمام ساختارهای داده‌ای که در سراسر برنامه استفاده می‌شوند.
  * واحدها: وزن = تن (t) | طول = متر (m) | زاویه = درجه (deg) | باد = متر بر ثانیه (m/s)
@@ -314,4 +314,38 @@ export interface ReportData {
   chartImage: string | null; // dataURL تصویر منحنی لودچارت
   transfer?: TransferResult | null; // نتیجه شبیه‌سازی جابجایی دوعرچه‌ای
   planType?: "free" | "pro"; // نوع لایسنس (برای واترمارک نسخه رایگان)
+  sceneObjects?: SceneObjectInstance[]; // تجهیزات محوطه در صحنه سه‌بعدی
+  cranePos?: { x: number; z: number } | null; // موقعیت استقرار جرثقیل (null = مرکز صحنه)
+}
+
+/** نقطه روی زمین صحنه سه‌بعدی (متر) */
+export interface GroundPoint {
+  x: number;
+  z: number;
+}
+
+/** نوع تجهیز محوطه (نیروگاه / پالایشگاه) برای واقعی‌سازی صحنه */
+export type SceneObjectType =
+  | "foundation" // فونداسیون بتنی
+  | "structure" // سازه فولادی چندطبقه
+  | "column" // برج/کلومن فرآیندی
+  | "tank" // مخزن ذخیره
+  | "exchanger" // مبدل حرارتی
+  | "coolingTower" // برج خنک‌کننده
+  | "pipeRack" // راک لوله
+  | "container" // کانتینر / شلتر
+  | "boiler" // بویلر
+  | "stack" // دودکش
+  | "cableDrum" // قرقره کابل
+  | "controlRoom" // اتاق کنترل
+  | "transformer"; // ترانس قدرت
+
+/** یک نمونه تجهیز گذاشته‌شده روی زمین صحنه */
+export interface SceneObjectInstance {
+  id: string;
+  type: SceneObjectType;
+  x: number; // متر (جهانی)
+  z: number; // متر (جهانی)
+  rotDeg: number; // چرخش حول محور عمود (درجه)
+  scale: number; // ضریب بزرگ‌نمایی (۱ = اندازه پایه)
 }

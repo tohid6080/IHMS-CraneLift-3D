@@ -279,3 +279,22 @@ Work Log:
 
 Stage Summary:
 - E2E verified (agent-browser): rope card shows 10 falls for LTM1090; calculator applied 14mm×4 override; flags A(5.1,-4.1 R6.5) B(-2.5,-27 R27.1) placed via canvas clicks; free user sim → upgrade dialog; CLP-PRO-2024-0007 activated (Pro فعال tile); sim ran to completion (پایان جابجایی — بار در B, Boom 33°, Hook 8.5m); verdict غیرمجاز correctly triggered by applied rope limit (line pull 2.67 > SWL 2.53) with point-tagged issues + fixes; Step5 rope card + transfer card; PDF downloaded (5 pages) with rope rows, rope check ✗, section ۷ transfer tables, renumbered ۸/۹/۱۰; mobile 390px OK; 0 console errors (only benign THREE deprecation warnings); tsc + eslint clean
+
+---
+Task ID: 10
+Agent: main coordinator
+Task: یکپارچه‌سازی شبیه‌سازی با Play + جابه‌جایی جرثقیل + تجهیزات نیروگاه/پالایشگاه + زاویه بوم در 3D و گزارش + ری‌برند IHMS CraneLift 3D
+
+Work Log:
+- Unified Play: run-analysis.ts → playUnified (analysis + planTransfer + sim + verdict در یک دکمه)؛ گیت Pro شبیه‌سازی حذف شد (رایگان: سهمیه روزانه ۵ اجرا؛ Pro نامحدود)؛ ScenePanel + Step5Analysis هر دو از playUnified استفاده می‌کنند؛ Step4Scene دکمه جداگانه «شبیه‌سازی حرکت» حذف و به «پخش مجدد» تبدیل شد؛ PLANS/UpgradeDialog متن‌ها به‌روز شد
+- Crane repositioning: store.cranePos + setCranePos (بازمحاسبه خودکار شعاع نسبت به محل جدید)؛ view3d flagMode="moveCrane"؛ CraneScene: گروه جرثقیل روی cranePos، حلقه‌های شعاع/منطقه ممنوعه/خط شعاع حول محل جرثقیل، effInputs و staticPoseOf/SimDriver و planTransfer همگی origin-aware؛ کارت «جابه‌جایی جرثقیل» در Step4 + دکمه بازگشت به مرکز
+- Scene objects: types.SceneObjectType/Instance + scene-objects.ts (۱۳ تجهیز: فونداسیون، سازه فولادی، کلومن، مخزن، مبدل، برج خنک‌کن، راک لوله، کانتینر، بویلر، دودکش، قرقره کابل، اتاق کنترل، ترانس) + SceneObjectsLayer با ۱۳ بیلدر پارامتریک، انتخاب با کلیک (emissive highlight + حلقه پایه)، چرخش ۴۵°، حذف تکی/گروهی؛ پالت در Step4؛ store.sceneObjects با persist
+- Boom angle in 3D: BoomAngleLabel (Sprite) روی بوم «∠ بوم ۶۷° — ۳۰m» (برجی: بوم افقی + Trolley) + HUD زنده DOM روی کانواس (زاویه بوم/طول بوم/شعاع/نوک بوم/چرخش/بار کل) + نوار فاز حرکت با Progress داخل کانواس
+- Report: pdf.ts → سربرگ با لوگوی IHMS (/logo.png) + عنوان IHMS CraneLift 3D؛ سکشن جدید «۴. صحنه سه‌بعدی و تجهیزات محوطه» (محل جرثقیل، ارتفاع A/B، جدول تجهیزات با موقعیت/چرخش/ابعاد)؛ renumber ۵..۱۱؛ watermark/creator/نام فایل → IHMS-CraneLift-Report-*.pdf؛ Step6Report sceneObjects+cranePos
+- Rebrand: Splash با لوگوی بزرگ IHMS (w-44→md:w-64) + «در حال بارگذاری IHMS CraneLift 3D...»؛ هدر: لوگو + IHMS CraneLift 3D / Integrated HSE Management System؛ فوتر و layout.tsx metadata؛ همه کامنت‌ها هم IHMS شد
+- Fixes: ۱۷ مورد خرابی args={[ در CraneScene (perl fix)؛ eslint: حذف directiveهای بلااستفاده؛ tsc + eslint clean
+
+Stage Summary:
+- E2E (agent-browser): انتخاب LTM1090 → صحنه → افزودن مخزن+فونداسیون (کلیک زمین) → جابه‌جایی جرثقیل به (4.7,-2.4) با به‌روزرسانی شعاع (R=21.4 نسبت به محل جدید) → پرچم A(25.6,2.2)/B(15,14.6) → Play واحد: تحلیل + حرکت A→B اجرا شد، HUD زنده (∠49→53°) و نتیجه غیرمجاز (A: 105% ظرفیت 11.2t) با «ایرادها و راهکار اصلاح (۲)» → با بار 5t مجاز (56%) → PDF دانلود شد: ۵ صفحه، لوگوی IHMS در سربرگ، تصویر 3D با تجهیزات، سکشن ۴ با جدول تجهیزات، واترمارک FREE ✓
+- Mobile 390px OK؛ 0 خطای کنسول/صفحه؛ dev.log پاک
+- فایل جدید: src/lib/cranelift/scene-objects.ts | public/logo.png (PNG 1000×1000 تبدیل‌شده از upload)

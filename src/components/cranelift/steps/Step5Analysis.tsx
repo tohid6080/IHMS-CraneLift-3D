@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * CraneLift Pro 3D — مرحله ۵: تحلیل لیفت (Play)
+ * IHMS CraneLift 3D — مرحله ۵: تحلیل لیفت (Play)
  * -----------------------------------------------------------
  * دکمه بزرگ اجرای تحلیل + نمایش نتیجه: وضعیت رنگی، گیج درصد ظرفیت،
  * گشتاورها، جدول بررسی‌های ایمنی و هشدارها.
@@ -44,9 +44,10 @@ import {
 import { useLiftStore } from "@/lib/cranelift/store";
 import { getCraneById } from "@/lib/cranelift/cranes";
 import { STATUS_COLORS, STATUS_LABELS } from "@/lib/cranelift/analysis";
-import { runAnalysis } from "../run-analysis";
+import { playUnified } from "../run-analysis";
 import TransferVerdictCard from "../TransferVerdictCard";
 import { useToast } from "@/hooks/use-toast";
+import { useUiStore } from "../ui-store";
 import type { AnalysisWarning } from "@/lib/cranelift/types";
 
 const STATUS_STYLES = {
@@ -93,6 +94,7 @@ export default function Step5Analysis() {
   const radiusM = useLiftStore((s) => s.inputs.radiusM);
   const transfer = useLiftStore((s) => s.transfer);
   const setStep = useLiftStore((s) => s.setStep);
+  const setUpgradeOpen = useUiStore((s) => s.setUpgradeOpen);
 
   const customCranes = useLiftStore((s) => s.customCranes);
   const crane = getCraneById(selectedId, customCranes);
@@ -108,22 +110,11 @@ export default function Step5Analysis() {
     );
   }
 
+  /** جریان واحد Play — همان دکمه پنل سه‌بعدی: تحلیل + شبیه‌سازی + نتیجه */
   const handlePlay = async () => {
     setRunning(true);
     try {
-      const r = await runAnalysis();
-      if (r) {
-        const titles = {
-          allowed: "✅ لیفت مجاز است",
-          caution: "⚠️ نیازمند بررسی بیشتر",
-          "not-allowed": "⛔ لیفت غیرمجاز است",
-        } as const;
-        toast({
-          title: titles[r.status],
-          description: r.conclusion,
-          variant: r.status === "not-allowed" ? "destructive" : "default",
-        });
-      }
+      await playUnified({ toast, onQuotaExceeded: () => setUpgradeOpen(true) });
     } finally {
       setRunning(false);
     }
@@ -151,8 +142,9 @@ export default function Step5Analysis() {
       </Button>
       {!result && (
         <p className="text-center text-sm text-muted-foreground">
-          با کلیک روی دکمه، ظرفیت از لودچارت درون‌یابی شده، گشتاورها، باد، شیب و
-          ریگینگ به‌طور کامل بررسی می‌شود.
+          با کلیک روی دکمه، تحلیل کامل اجرا و اگر دو پرچم ثبت شده باشد حرکت جرثقیل A→B هم
+          شبیه‌سازی می‌شود؛ ظرفیت از لودچارت درون‌یابی شده، گشتاورها، باد، شیب و ریگینگ
+          به‌طور کامل بررسی می‌شود.
         </p>
       )}
 

@@ -1,5 +1,5 @@
 /**
- * CraneLift Pro 3D — استور مرکزی (Zustand + persist روی localStorage)
+ * IHMS CraneLift 3D — استور مرکزی (Zustand + persist روی localStorage)
  * -----------------------------------------------------------
  * تمام وضعیت برنامه: مرحله ویزارد، جرثقیل انتخابی، لودچارت‌های سفارشی،
  * ورودی‌های لیفت، نتیجه تحلیل و متادیتای پروژه.
@@ -11,11 +11,16 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import type {
   AnalysisResult,
   Crane,
+  GroundPoint,
   LiftInputs,
   LoadChart,
   ProjectMeta,
+  SceneObjectInstance,
   TransferResult,
 } from "./types";
+import { makeSceneObjectId } from "./scene-objects";
+
+export type { GroundPoint } from "./types";
 import {
   consumeQuota,
   DEFAULT_LICENSE,
@@ -105,12 +110,6 @@ export const DEFAULT_INPUTS: LiftInputs = {
   notes: "",
 };
 
-/** نقطه روی زمین صحنه سه‌بعدی (متر) */
-export interface GroundPoint {
-  x: number;
-  z: number;
-}
-
 /** متادیتای پیش‌فرض پروژه */
 function defaultMeta(): ProjectMeta {
   return {
@@ -166,6 +165,17 @@ interface CraneLiftState {
   setPickPoint: (p: GroundPoint) => void;
   setPlacePoint: (p: GroundPoint) => void;
   clearFlags: () => void;
+
+  // ── موقعیت استقرار جرثقیل (جابه‌جایی جرثقیل در صحنه) ──
+  cranePos: GroundPoint | null; // null = مرکز صحنه (۰،۰)
+  setCranePos: (p: GroundPoint | null) => void;
+
+  // ── تجهیزات محوطه (نیروگاه/پالایشگاه) ──
+  sceneObjects: SceneObjectInstance[];
+  addSceneObject: (type: SceneObjectInstance["type"], x: number, z: number) => void;
+  updateSceneObject: (id: string, patch: Partial<SceneObjectInstance>) => void;
+  removeSceneObject: (id: string) => void;
+  clearSceneObjects: () => void;
 
   // ── لایسنس و سهمیه نسخه رایگان ──
   license: LicenseState;
@@ -277,20 +287,54 @@ export const useLiftStore = create<CraneLiftState>()(
       result: null,
       setResult: (r) => set({ result: r }),
 
-      // پرچم‌ها — نقطه برداشت شعاع کاری را همزمان به‌روز می‌کند
+      // پرچم‌ها — نقطه برداشت شعاع کاری را همزمان (نسبت به جرثقیل) به‌روز می‌کند
       pickPoint: null,
       placePoint: null,
-      setPickPoint: (p) =>
+      setPickPoint: (p) => {
+        const o = get().cranePos ?? { x: 0, z: 0 };
         set({
           pickPoint: p,
           inputs: {
             ...get().inputs,
             radiusMode: "radius",
-            radiusM: Math.round(Math.hypot(p.x, p.z) * 10) / 10,
+            radiusM: Math.round(Math.hypot(p.x - o.x, p.z - o.z) * 10) / 10,
           },
-        }),
+        });
+      },
       setPlacePoint: (p) => set({ placePoint: p }),
       clearFlags: () => set({ pickPoint: null, placePoint: null }),
+
+      // جابه‌جایی جرثقیل — شعاع کاری نسبت به موقعیت جدید بازمحاسبه می‌شود
+      cranePos: null,
+      setCranePos: (p) => {
+        const st = get();
+        const o = p ?? { x: 0, z: 0 };
+        const patch: Partial<CraneLiftState> = { cranePos: p };
+        if (st.pickPoint) {
+          patch.inputs = {
+            ...st.inputs,
+            radiusM: Math.round(Math.hypot(st.pickPoint.x - o.x, st.pickPoint.z - o.z) * 10) / 10,
+          };
+        }
+        set(patch as CraneLiftState);
+      },
+
+      // تجهیزات محوطه
+      sceneObjects: [],
+      addSceneObject: (type, x, z) =>
+        set({
+          sceneObjects: [
+            ...get().sceneObjects,
+            { id: makeSceneObjectId(type), type, x: Math.round(x * 10) / 10, z: Math.round(z * 10) / 10, rotDeg: 0, scale: 1 },
+          ],
+        }),
+      updateSceneObject: (id, patch) =>
+        set({
+          sceneObjects: get().sceneObjects.map((o) => (o.id === id ? { ...o, ...patch } : o)),
+        }),
+      removeSceneObject: (id) =>
+        set({ sceneObjects: get().sceneObjects.filter((o) => o.id !== id) }),
+      clearSceneObjects: () => set({ sceneObjects: [] }),
 
       // لایسنس
       license: DEFAULT_LICENSE,
@@ -335,6 +379,8 @@ export const useLiftStore = create<CraneLiftState>()(
           chartImage: null,
           pickPoint: null,
           placePoint: null,
+          cranePos: null,
+          sceneObjects: [],
           transfer: null,
           usage: freshUsage(),
         }),
@@ -369,6 +415,8 @@ export function useHydrateLiftStore(): boolean {
         transfer: st.transfer ?? null,
         pickPoint: st.pickPoint ?? null,
         placePoint: st.placePoint ?? null,
+        cranePos: st.cranePos ?? null,
+        sceneObjects: Array.isArray(st.sceneObjects) ? st.sceneObjects : [],
       });
       setHydrated(true);
     });

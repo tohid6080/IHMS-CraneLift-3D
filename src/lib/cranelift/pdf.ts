@@ -1,5 +1,5 @@
 /**
- * CraneLift Pro 3D — مولد گزارش PDF حرفه‌ای (فارسی، RTL)
+ * IHMS CraneLift 3D — مولد گزارش PDF حرفه‌ای (فارسی، RTL)
  * -----------------------------------------------------------
  * تولید گزارش چندصفحه‌ای A4 در سمت کلاینت با html2canvas + jsPDF:
  *   ۱) ساخت یک عنصر DOM مخفی برای گزارش — فقط استایل inline با رنگ HEX
@@ -14,6 +14,7 @@
 
 import { CRANE_TYPE_LABELS } from "./types";
 import { STATUS_LABELS } from "./analysis";
+import { SCENE_OBJECT_CATALOG, sceneObjectLabel } from "./scene-objects";
 import type {
   AnalysisResult,
   CheckLevel,
@@ -261,6 +262,18 @@ function kvTable(rows: Array<[string, Cell]>): HTMLTableElement {
 
 /** الف) نوار سربرگ + شبکه متادیتای پروژه (بدون حاشیه) */
 function headerBand(data: ReportData): HTMLElement {
+  // سربرگ با لوگوی IHMS (تصویر هم‌مبلا /logo.png)
+  const logo = el("img", {
+    width: "74px",
+    height: "74px",
+    objectFit: "contain",
+    borderRadius: "10px",
+    background: "#ffffff",
+    border: "2px solid #1c1917",
+  });
+  logo.src = "/logo.png";
+  logo.alt = "IHMS — Integrated HSE Management System";
+
   const band = el(
     "div",
     {
@@ -268,23 +281,36 @@ function headerBand(data: ReportData): HTMLElement {
       color: "#1c1917",
       borderRadius: "12px",
       padding: "18px 24px",
-      textAlign: "center",
+      display: "flex",
+      alignItems: "center",
+      gap: "18px",
+      textAlign: "start",
     },
+    logo,
     el(
       "div",
-      { fontSize: "20px", fontWeight: "700", lineHeight: "1.6" },
-      "گزارش برنامه‌ریزی و تحلیل لیفت جرثقیل"
-    ),
-    el(
-      "div",
-      {
-        fontSize: "12px",
-        fontWeight: "600",
-        color: "#44403c",
-        marginTop: "2px",
-        direction: "ltr",
-      },
-      "CraneLift Pro 3D — Lift Plan & Analysis Report"
+      { flex: "1" },
+      el(
+        "div",
+        { fontSize: "20px", fontWeight: "700", lineHeight: "1.6" },
+        "گزارش برنامه‌ریزی و تحلیل لیفت جرثقیل"
+      ),
+      el(
+        "div",
+        {
+          fontSize: "12px",
+          fontWeight: "600",
+          color: "#44403c",
+          marginTop: "2px",
+          direction: "ltr",
+        },
+        "IHMS CraneLift 3D — Lift Plan & Analysis Report"
+      ),
+      el(
+        "div",
+        { fontSize: "10.5px", color: "#57534e", marginTop: "2px", direction: "ltr" },
+        "Integrated HSE Management System"
+      )
     )
   );
 
@@ -464,7 +490,13 @@ function figure(src: string, caption: string): HTMLElement {
 /** ث) بلوک «۳. تصاویر» — فقط اگر دست‌کم یک تصویر موجود باشد */
 function imagesBlock(data: ReportData): HTMLElement | null {
   const items: HTMLElement[] = [];
-  if (data.screenshot3D) items.push(figure(data.screenshot3D, "نمای سه‌بعدی لیفت"));
+  if (data.screenshot3D)
+    items.push(
+      figure(
+        data.screenshot3D,
+        "نمای سه‌بعدی صحنه — جرثقیل، پرچم‌های A/B و تجهیزات محوطه (زاویه بوم و مشخصات روی صحنه)"
+      )
+    );
   if (data.chartImage)
     items.push(figure(data.chartImage, "منحنی لودچارت (ظرفیت-شعاع)"));
   if (items.length === 0) return null;
@@ -473,6 +505,62 @@ function imagesBlock(data: ReportData): HTMLElement | null {
     { display: "flex", flexWrap: "wrap", gap: "18px", marginTop: "4px" },
     ...items
   );
+}
+
+/** ج۲) بلوک «۴. صحنه سه‌بعدی و تجهیزات محوطه» — موقعیت‌ها + جدول تجهیزات */
+function sceneBlock(data: ReportData): HTMLElement {
+  const wrap = el("div", {});
+
+  const o = data.cranePos ?? null;
+  const posText = o ? `X = ${num(o.x)} m ، Z = ${num(o.z)} m` : "مرکز صحنه (0، 0)";
+
+  const kvRows: Array<[string, Cell]> = [
+    ["محل استقرار جرثقیل", posText],
+    ["ارتفاع برداشت بار (A)", `${num(data.inputs.pickHeightM)} متر`],
+    ["ارتفاع جایگذاری بار (B)", `${num(data.inputs.placeHeightM)} متر`],
+    ["شیب نمایشی زمین", `${num(data.inputs.groundSlopeDeg)} درجه`],
+  ];
+  wrap.appendChild(kvTable(kvRows));
+
+  const objs = data.sceneObjects ?? [];
+  if (objs.length === 0) {
+    wrap.appendChild(
+      el(
+        "div",
+        { fontSize: "11.5px", color: "#78716c", marginTop: "6px" },
+        "تجهیز خاصی در صحنه سه‌بعدی ثبت نشده است."
+      )
+    );
+    return wrap;
+  }
+
+  wrap.appendChild(
+    el(
+      "div",
+      { fontSize: "11.5px", color: "#57534e", margin: "6px 0 4px" },
+      `تجهیزات محوطه (${objs.length} مورد) — ابعاد پایه بر حسب متر:`
+    )
+  );
+
+  const rows: Cell[][] = objs.map((obj, i) => {
+    const m = SCENE_OBJECT_CATALOG[obj.type];
+    const dims = `${num(m.w * obj.scale)}×${num(m.d * obj.scale)}×${num(m.h * obj.scale)}`;
+    return [
+      { text: String(i + 1), color: "#57534e" },
+      sceneObjectLabel(obj.type),
+      `${num(obj.x)}`, `${num(obj.z)}`,
+      `${num(obj.rotDeg)}°`,
+      dims,
+    ];
+  });
+  wrap.appendChild(
+    table(
+      ["#", "نوع تجهیز", "X (m)", "Z (m)", "چرخش", "ابعاد (ط×ع×ح)"],
+      rows,
+      { centerCols: [0, 2, 3, 4, 5] }
+    )
+  );
+  return wrap;
 }
 
 /** ج) ردیف‌های «۴. نتایج تحلیل» — مقادیر null → «—» */
@@ -529,7 +617,7 @@ function resultRows(result: AnalysisResult | null): Array<[string, Cell]> {
 /** و) بلوک «۷. شبیه‌سازی جابجایی دوعرشه‌ای» — جدول دو نقطه + ایرادها و راهکار */
 function transferBlock(transfer: TransferResult): HTMLElement {
   const wrap = el("div", {});
-  wrap.appendChild(h2("۷. شبیه‌سازی جابجایی دوپرچمی (A → B)"));
+  wrap.appendChild(h2("۸. شبیه‌سازی جابجایی دوپرچمی (A → B)"));
 
   // بنر وضعیت کل
   wrap.appendChild(
@@ -683,11 +771,11 @@ function warningsBlock(result: AnalysisResult | null): HTMLElement {
   return wrap;
 }
 
-/** خ) بلوک «۸. لودچارت استفاده‌شده» — بج + جدول نزدیک‌ترین سکشن به طول بوم */
+/** خ) بلوک «۹. لودچارت استفاده‌شده» — بج + جدول نزدیک‌ترین سکشن به طول بوم */
 function chartBlock(chart: LoadChart | null, boomLengthM: number): HTMLElement {
   const wrap = el("div", {});
   if (!chart || chart.sections.length === 0) {
-    wrap.appendChild(h2("۸. لودچارت استفاده‌شده"));
+    wrap.appendChild(h2("۹. لودچارت استفاده‌شده"));
     wrap.appendChild(
       el("div", { fontSize: "12px", color: "#78716c" }, "لودچارتی ثبت نشده")
     );
@@ -711,7 +799,7 @@ function chartBlock(chart: LoadChart | null, boomLengthM: number): HTMLElement {
     isCustom ? "سفارشی" : "مرجع"
   );
 
-  const title = h2("۸. لودچارت استفاده‌شده");
+  const title = h2("۹. لودچارت استفاده‌شده");
   title.appendChild(badge);
   wrap.appendChild(title);
 
@@ -815,7 +903,7 @@ function footerBlock(): HTMLElement {
     el(
       "div",
       {},
-      "این گزارش توسط CraneLift Pro 3D تولید شده است. داده‌های لودچارت مرجع، تقریبی و صرفاً برای برنامه‌ریزی اولیه است؛ پیش از اجرای لیفت واقعی، لودچارت رسمی سازنده ملاک عمل است."
+      "این گزارش توسط IHMS CraneLift 3D تولید شده است. داده‌های لودچارت مرجع، تقریبی و صرفاً برای برنامه‌ریزی اولیه است؛ پیش از اجرای لیفت واقعی، لودچارت رسمی سازنده ملاک عمل است."
     ),
     el(
       "div",
@@ -861,26 +949,29 @@ function buildReportElement(data: ReportData): HTMLDivElement {
     root.appendChild(h2("۳. تصاویر"));
     root.appendChild(images);
   }
-  // ج) ۴. نتایج تحلیل
-  root.appendChild(h2("۴. نتایج تحلیل"));
+  // ج۲) ۴. صحنه سه‌بعدی و تجهیزات محوطه
+  root.appendChild(h2("۴. صحنه سه‌بعدی و تجهیزات محوطه"));
+  root.appendChild(sceneBlock(data));
+  // ج) ۵. نتایج تحلیل
+  root.appendChild(h2("۵. نتایج تحلیل"));
   root.appendChild(kvTable(resultRows(data.result)));
-  // چ) ۵. جدول بررسی‌های ایمنی
-  root.appendChild(h2("۵. جدول بررسی‌های ایمنی"));
+  // چ) ۶. جدول بررسی‌های ایمنی
+  root.appendChild(h2("۶. جدول بررسی‌های ایمنی"));
   root.appendChild(checksBlock(data.result));
-  // ح) ۶. هشدارها
-  root.appendChild(h2("۶. هشدارها"));
+  // ح) ۷. هشدارها
+  root.appendChild(h2("۷. هشدارها"));
   root.appendChild(warningsBlock(data.result));
-  // و) ۷. شبیه‌سازی جابجایی دوعرچه‌ای (در صورت اجرا)
+  // و) ۸. شبیه‌سازی جابجایی دوعرچه‌ای (در صورت اجرا)
   if (data.transfer) {
     root.appendChild(transferBlock(data.transfer));
   }
-  // خ) ۸. لودچارت استفاده‌شده
+  // خ) ۹. لودچارت استفاده‌شده
   root.appendChild(chartBlock(data.chart, data.inputs.boomLengthM));
-  // د) ۹. توصیه‌های ایمنی
-  root.appendChild(h2("۹. توصیه‌های ایمنی"));
+  // د) ۱۰. توصیه‌های ایمنی
+  root.appendChild(h2("۱۰. توصیه‌های ایمنی"));
   root.appendChild(safetyTipsBlock());
-  // ذ) ۱۰. تأییدات
-  root.appendChild(h2("۱۰. تأییدات"));
+  // ذ) ۱۱. تأییدات
+  root.appendChild(h2("۱۱. تأییدات"));
   root.appendChild(signaturesBlock());
   // ر) پانوشت
   root.appendChild(footerBlock());
@@ -903,7 +994,7 @@ function buildReportElement(data: ReportData): HTMLDivElement {
           direction: "ltr",
           letterSpacing: "3px",
         },
-        "FREE VERSION — CraneLift Pro 3D"
+        "FREE VERSION — IHMS CraneLift 3D"
       );
       return w;
     };
@@ -955,8 +1046,8 @@ export async function downloadPDFReport(data: ReportData): Promise<void> {
       compress: true,
     });
     pdf.setProperties({
-      title: `CraneLift Report — ${data.meta.projectId}`,
-      creator: "CraneLift Pro 3D",
+      title: `IHMS CraneLift Report — ${data.meta.projectId}`,
+      creator: "IHMS CraneLift 3D",
     });
 
     // برش عمودی گزارش به صفحات A4
@@ -993,7 +1084,7 @@ export async function downloadPDFReport(data: ReportData): Promise<void> {
       pageIndex += 1;
     }
 
-    pdf.save(`CraneLift-Report-${data.meta.projectId}.pdf`);
+    pdf.save(`IHMS-CraneLift-Report-${data.meta.projectId}.pdf`);
   } catch (err) {
     throw new Error(
       `خطا در ساخت گزارش PDF: ${err instanceof Error ? err.message : String(err)}`

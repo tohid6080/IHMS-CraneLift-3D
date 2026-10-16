@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * CraneLift Pro 3D — صحنه سه‌بعدی (React Three Fiber)
+ * IHMS CraneLift 3D — صحنه سه‌بعدی (React Three Fiber)
  * -----------------------------------------------------------
  * شماتیک واقعی و قابل چرخش/زوم از جرثقیل انتخابی + بار + زمین + مانع.
  * - بوم و جیب دقیقاً بر اساس زوایای ورودی حرکت می‌کنند
@@ -18,7 +18,7 @@ import { useLiftStore } from "@/lib/cranelift/store";
 import { getCraneById } from "@/lib/cranelift/cranes";
 import { solveGeometry, STATUS_COLORS, HOOK_BLOCK_HEIGHT_M } from "@/lib/cranelift/analysis";
 import { sceneCapture } from "@/lib/cranelift/capture";
-import { useView3D } from "./view3d-store";
+import { useView3D, type FlagMode } from "./view3d-store";
 import { useSim } from "./sim-store";
 import {
   buildTimeline,
@@ -29,7 +29,8 @@ import {
   type SegPose,
   type SimPose,
 } from "@/lib/cranelift/simulation";
-import type { Crane, LiftInputs } from "@/lib/cranelift/types";
+import type { Crane, GroundPoint, LiftInputs, SceneObjectInstance } from "@/lib/cranelift/types";
+import { SCENE_OBJECT_CATALOG, sceneObjectLabel } from "@/lib/cranelift/scene-objects";
 
 const D2R = Math.PI / 180;
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -114,7 +115,17 @@ function CaptureRegister() {
 }
 
 // ───────────────────────── دوربین هوشمند ─────────────────────────
-function CameraRig({ radius, height, frozen }: { radius: number; height: number; frozen: boolean }) {
+function CameraRig({
+  radius,
+  height,
+  frozen,
+  center = [0, 0],
+}: {
+  radius: number;
+  height: number;
+  frozen: boolean;
+  center?: [number, number];
+}) {
   const controls = useThree((s) => s.controls) as unknown as {
     target: THREE.Vector3;
     object: THREE.PerspectiveCamera;
@@ -131,25 +142,39 @@ function CameraRig({ radius, height, frozen }: { radius: number; height: number;
       lastFit.current = { radius, height };
       // فاصله دوربین متناسب با بزرگ‌ترین بعد صحنه + مارجین برای قاب کامل
       const dist = Math.max(radius, height * 0.9) * 1.25 + 18;
-      controls.target.set(radius * 0.45, Math.max(2, height * 0.32), 0);
-      controls.object.position.set(dist * 0.82, Math.max(11, height * 0.6 + 7), dist * 0.82);
+      controls.target.set(center[0] + radius * 0.45, Math.max(2, height * 0.32), center[1]);
+      controls.object.position.set(
+        center[0] + dist * 0.82,
+        Math.max(11, height * 0.6 + 7),
+        center[1] + dist * 0.82
+      );
       controls.update();
     }
-  }, [controls, radius, height, frozen]);
+  }, [controls, radius, height, frozen, center[0], center[1]]);
   return null;
 }
 
 // ───────────────────────── جزئیات مشترک ─────────────────────────
 
-/** زمین + گرید — با کلیک‌گذاری پرچم روی زمین */
+/** زمین + گرید — با کلیک: پرچم A/B، جابه‌جایی جرثقیل یا افزودن تجهیز */
 function Ground({
   flagMode,
   onGroundClick,
 }: {
-  flagMode: "off" | "pick" | "place";
+  flagMode: FlagMode;
   onGroundClick?: (x: number, z: number) => void;
 }) {
   const downRef = useRef<{ x: number; y: number } | null>(null);
+  const tint =
+    flagMode === "pick"
+      ? "#33280f"
+      : flagMode === "place"
+        ? "#0f2e22"
+        : flagMode === "moveCrane"
+          ? "#322412"
+          : flagMode === "object"
+            ? "#202a24"
+            : "#262626";
   return (
     <group>
       <mesh
@@ -160,8 +185,8 @@ function Ground({
           downRef.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY };
         }}
         onClick={(e) => {
-          // پرچم فقط با کلیک واقعی (بدون درگ چرخش دوربین) ثبت می‌شود
-          if (flagMode === "off" || !onGroundClick) return;
+          // ثبت نقطه فقط با کلیک واقعی (بدون درگ چرخش دوربین)
+          if (!onGroundClick) return;
           const d = downRef.current;
           downRef.current = null;
           if (!d) return;
@@ -171,11 +196,7 @@ function Ground({
         }}
       >
         <planeGeometry args={[260, 260]} />
-        <meshStandardMaterial
-          color={flagMode === "pick" ? "#33280f" : flagMode === "place" ? "#0f2e22" : "#262626"}
-          roughness={1}
-          metalness={0}
-        />
+        <meshStandardMaterial color={tint} roughness={1} metalness={0} />
       </mesh>
       <Grid
         position={[0, 0.02, 0]}
@@ -345,6 +366,367 @@ function GroundLoad({
   );
 }
 
+// ───────────────────────── تجهیزات محوطه (نیروگاه / پالایشگاه) ─────────────────────────
+
+/** پراپرتی‌های متریال با هایلایت انتخاب */
+function objMat(color: string, selected: boolean) {
+  return {
+    color,
+    emissive: selected ? "#f59e0b" : "#000000",
+    emissiveIntensity: selected ? 0.45 : 0,
+    roughness: 0.75,
+    metalness: 0.25,
+  } as const;
+}
+
+/** بدنه سه‌بعدی هر نوع تجهیز بر اساس کاتالوگ (ابعاد پایه × مقیاس) */
+function SceneObjectBody({ type, s, selected }: { type: SceneObjectInstance["type"]; s: number; selected: boolean }) {
+  const m = SCENE_OBJECT_CATALOG[type];
+  const edge = <Edges color={selected ? "#fbbf24" : m.edge} />;
+  switch (type) {
+    case "foundation":
+      return (
+        <group>
+          <mesh position={[0, (m.h * s) / 2, 0]} castShadow receiveShadow>
+            <boxGeometry args={[m.w * s, m.h * s, m.d * s]} />
+            <meshStandardMaterial {...objMat(m.color, selected)} />
+            {edge}
+          </mesh>
+          <mesh position={[0, m.h * s + 0.15 * s, 0]} castShadow>
+            <boxGeometry args={[m.w * s * 0.55, 0.3 * s, m.d * s * 0.55]} />
+            <meshStandardMaterial {...objMat("#808a95", selected)} />
+          </mesh>
+        </group>
+      );
+    case "structure":
+      return (
+        <group>
+          {[-1, 1].flatMap((sx) =>
+            [-1, 1].map((sz) => (
+              <mesh key={`${sx}${sz}`} position={[(sx * m.w * s) / 2, (m.h * s) / 2, (sz * m.d * s) / 2]} castShadow>
+                <boxGeometry args={[0.45 * s, m.h * s, 0.45 * s]} />
+                <meshStandardMaterial {...objMat(m.color, selected)} />
+                {edge}
+              </mesh>
+            ))
+          )}
+          {[0.34, 0.67, 1].map((f, i) => (
+            <mesh key={i} position={[0, m.h * s * f, 0]} castShadow>
+              <boxGeometry args={[m.w * s + 0.3 * s, 0.35 * s, m.d * s + 0.3 * s]} />
+              <meshStandardMaterial {...objMat(i === 2 ? m.color : "#7c8794", selected)} />
+              {edge}
+            </mesh>
+          ))}
+        </group>
+      );
+    case "column":
+      return (
+        <group>
+          <mesh position={[0, (m.h * s) / 2, 0]} castShadow>
+            <cylinderGeometry args={[(m.w * s) / 2, (m.w * s) / 2, m.h * s, 24]} />
+            <meshStandardMaterial {...objMat(m.color, selected)} />
+            {edge}
+          </mesh>
+          <mesh position={[0, 1.2 * s, 0]} castShadow>
+            <cylinderGeometry args={[(m.w * s) / 2 + 0.5 * s, (m.w * s) / 2 + 0.7 * s, 2.4 * s, 24]} />
+            <meshStandardMaterial {...objMat("#8f9aa6", selected)} />
+          </mesh>
+          {[0.4, 0.7].map((f, i) => (
+            <mesh key={i} position={[0, m.h * s * f, 0]} castShadow>
+              <cylinderGeometry args={[(m.w * s) / 2 + 0.7 * s, (m.w * s) / 2 + 0.7 * s, 0.25 * s, 24]} />
+              <meshStandardMaterial {...objMat("#94a3b8", selected)} />
+            </mesh>
+          ))}
+          <mesh position={[0, m.h * s + 0.4 * s, 0]} castShadow>
+            <sphereGeometry args={[(m.w * s) / 2, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2]} />
+            <meshStandardMaterial {...objMat(m.color, selected)} />
+          </mesh>
+        </group>
+      );
+    case "tank":
+      return (
+        <group>
+          <mesh position={[0, (m.h * s * 0.88) / 2, 0]} castShadow>
+            <cylinderGeometry args={[(m.w * s) / 2, (m.w * s) / 2, m.h * s * 0.88, 32]} />
+            <meshStandardMaterial {...objMat(m.color, selected)} />
+            {edge}
+          </mesh>
+          <mesh position={[0, m.h * s * 0.88 + (m.h * s * 0.12) / 2, 0]} castShadow>
+            <coneGeometry args={[(m.w * s) / 2, m.h * s * 0.12, 32]} />
+            <meshStandardMaterial {...objMat(m.edge, selected)} />
+          </mesh>
+          <mesh position={[0, 0.25 * s, 0]} castShadow>
+            <cylinderGeometry args={[(m.w * s) / 2 + 0.15 * s, (m.w * s) / 2 + 0.15 * s, 0.5 * s, 32]} />
+            <meshStandardMaterial {...objMat("#9aa4b0", selected)} />
+          </mesh>
+        </group>
+      );
+    case "exchanger":
+      return (
+        <group>
+          <mesh position={[0, m.h * s * 0.62, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+            <cylinderGeometry args={[(m.h * s) / 2, (m.h * s) / 2, m.w * s * 0.9, 24]} />
+            <meshStandardMaterial {...objMat(m.color, selected)} />
+            {edge}
+          </mesh>
+          {[-1, 1].map((sx) => (
+            <mesh key={sx} position={[sx * m.w * s * 0.3, (m.h * s) / 6, 0]} castShadow>
+              <boxGeometry args={[0.5 * s, (m.h * s) / 3, m.d * s]} />
+              <meshStandardMaterial {...objMat("#57534e", selected)} />
+            </mesh>
+          ))}
+          <mesh position={[m.w * s * 0.38, m.h * s * 0.62, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+            <cylinderGeometry args={[(m.h * s) / 2.2, (m.h * s) / 2.2, 0.5 * s, 24]} />
+            <meshStandardMaterial {...objMat("#78716c", selected)} />
+          </mesh>
+        </group>
+      );
+    case "coolingTower":
+      return (
+        <group>
+          <mesh position={[0, (m.h * s) / 2, 0]} castShadow>
+            <cylinderGeometry args={[(m.w * s) / 3.2, (m.w * s) / 2, m.h * s, 28]} />
+            <meshStandardMaterial {...objMat(m.color, selected)} />
+            {edge}
+          </mesh>
+          <mesh position={[0, 0.4 * s, 0]} castShadow receiveShadow>
+            <cylinderGeometry args={[(m.w * s) / 2 + 0.6 * s, (m.w * s) / 2 + 0.8 * s, 0.8 * s, 28]} />
+            <meshStandardMaterial {...objMat("#8b939d", selected)} />
+          </mesh>
+        </group>
+      );
+    case "pipeRack":
+      return (
+        <group>
+          {[-1, 1].map((sz) =>
+            [-1, 1].map((sx) => (
+              <mesh key={`${sx}${sz}`} position={[(sx * m.w * s) / 2, (m.h * s) / 2, (sz * m.d * s) / 2]} castShadow>
+                <boxGeometry args={[0.35 * s, m.h * s, 0.35 * s]} />
+                <meshStandardMaterial {...objMat(m.color, selected)} />
+                {edge}
+              </mesh>
+            ))
+          )}
+          {[0.45, 1].map((f, i) => (
+            <mesh key={i} position={[0, m.h * s * f, 0]} castShadow>
+              <boxGeometry args={[m.w * s, 0.3 * s, m.d * s]} />
+              <meshStandardMaterial {...objMat("#57534e", selected)} />
+            </mesh>
+          ))}
+          {[-0.8, 0, 0.8].map((z, i) => (
+            <mesh key={i} position={[0, m.h * s * 0.45 + 0.45 * s, z * s]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+              <cylinderGeometry args={[0.4 * s, 0.4 * s, m.w * s - 0.6 * s, 16]} />
+              <meshStandardMaterial {...objMat(i === 1 ? "#a8a29e" : "#8f8a84", selected)} />
+            </mesh>
+          ))}
+        </group>
+      );
+    case "container":
+      return (
+        <group>
+          <mesh position={[0, (m.h * s) / 2, 0]} castShadow>
+            <boxGeometry args={[m.w * s, m.h * s, m.d * s]} />
+            <meshStandardMaterial {...objMat(m.color, selected)} />
+            {edge}
+          </mesh>
+          <mesh position={[m.w * s * 0.3, (m.h * s) / 2, m.d * s / 2 + 0.03]} castShadow>
+            <boxGeometry args={[1.1 * s, m.h * s * 0.8, 0.06]} />
+            <meshStandardMaterial {...objMat("#7c2d12", selected)} />
+          </mesh>
+        </group>
+      );
+    case "boiler":
+      return (
+        <group>
+          <mesh position={[0, (m.h * s) / 2, 0]} castShadow>
+            <boxGeometry args={[m.w * s, m.h * s, m.d * s]} />
+            <meshStandardMaterial {...objMat(m.color, selected)} />
+            {edge}
+          </mesh>
+          <mesh position={[0, m.h * s + 0.6 * s, 0]} castShadow>
+            <cylinderGeometry args={[0.9 * s, 0.9 * s, 1.2 * s, 18]} />
+            <meshStandardMaterial {...objMat("#64748b", selected)} />
+          </mesh>
+        </group>
+      );
+    case "stack":
+      return (
+        <group>
+          <mesh position={[0, (m.h * s) / 2, 0]} castShadow>
+            <cylinderGeometry args={[(m.w * s) / 2.6, (m.w * s) / 2, m.h * s, 20]} />
+            <meshStandardMaterial {...objMat(m.color, selected)} />
+            {edge}
+          </mesh>
+          {[0.3, 0.45].map((f, i) => (
+            <mesh key={i} position={[0, m.h * s * f, 0]} castShadow>
+              <cylinderGeometry args={[(m.w * s) / 2.45, (m.w * s) / 2.45, m.h * s * 0.06, 20]} />
+              <meshStandardMaterial {...objMat("#b91c1c", selected)} />
+            </mesh>
+          ))}
+        </group>
+      );
+    case "cableDrum":
+      return (
+        <group>
+          {[-1, 1].map((sx) => (
+            <mesh key={sx} position={[sx * 1.1 * s, (m.h * s) / 2, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+              <cylinderGeometry args={[(m.h * s) / 2, (m.h * s) / 2, 0.25 * s, 24]} />
+              <meshStandardMaterial {...objMat(m.color, selected)} />
+              {edge}
+            </mesh>
+          ))}
+          <mesh position={[0, (m.h * s) / 2, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+            <cylinderGeometry args={[(m.h * s) / 2.6, (m.h * s) / 2.6, 2.2 * s, 24]} />
+            <meshStandardMaterial {...objMat("#854d0e", selected)} />
+          </mesh>
+          {[-1, 1].map((sx) => (
+            <mesh key={sx} position={[sx * 1.1 * s, 0.15 * s, 0]} castShadow>
+              <boxGeometry args={[0.4 * s, 0.3 * s, m.h * s * 1.15]} />
+              <meshStandardMaterial {...objMat("#57534e", selected)} />
+            </mesh>
+          ))}
+        </group>
+      );
+    case "controlRoom":
+      return (
+        <group>
+          <mesh position={[0, (m.h * s) / 2, 0]} castShadow>
+            <boxGeometry args={[m.w * s, m.h * s, m.d * s]} />
+            <meshStandardMaterial {...objMat(m.color, selected)} />
+            {edge}
+          </mesh>
+          <mesh position={[0, m.h * s + 0.1 * s, 0]} castShadow>
+            <boxGeometry args={[m.w * s + 0.4 * s, 0.2 * s, m.d * s + 0.4 * s]} />
+            <meshStandardMaterial {...objMat("#a8a29e", selected)} />
+          </mesh>
+          <mesh position={[m.w * s * 0.28, m.h * s * 0.42, m.d * s / 2 + 0.03]} castShadow>
+            <boxGeometry args={[0.9 * s, m.h * s * 0.75, 0.06]} />
+            <meshStandardMaterial {...objMat("#44403c", selected)} />
+          </mesh>
+        </group>
+      );
+    case "transformer":
+      return (
+        <group>
+          <mesh position={[0, (m.h * s * 0.7) / 2, 0]} castShadow>
+            <boxGeometry args={[m.w * s, m.h * s * 0.7, m.d * s]} />
+            <meshStandardMaterial {...objMat(m.color, selected)} />
+            {edge}
+          </mesh>
+          {[-1, 0, 1].map((i) => (
+            <mesh key={i} position={[i * m.w * s * 0.28, m.h * s * 0.7 + m.h * s * 0.14, 0]} castShadow>
+              <cylinderGeometry args={[0.16 * s, 0.22 * s, m.h * s * 0.3, 12]} />
+              <meshStandardMaterial {...objMat("#d6d3d1", selected)} />
+            </mesh>
+          ))}
+          {[-1, 1].map((sz) => (
+            <mesh key={sz} position={[0, (m.h * s) / 2, sz * (m.d * s / 2 + 0.25 * s)]} castShadow>
+              <boxGeometry args={[m.w * s * 0.85, m.h * s * 0.55, 0.3 * s]} />
+              <meshStandardMaterial {...objMat("#3f6212", selected)} />
+            </mesh>
+          ))}
+        </group>
+      );
+  }
+}
+
+/** یک نمونه تجهیز روی زمین — قابل انتخاب با کلیک */
+function SceneObjectItem({
+  obj,
+  selected,
+  onSelect,
+}: {
+  obj: SceneObjectInstance;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const meta = SCENE_OBJECT_CATALOG[obj.type];
+  return (
+    <group
+      position={[obj.x, 0, obj.z]}
+      rotation={[0, obj.rotDeg * D2R, 0]}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect();
+      }}
+    >
+      <SceneObjectBody type={obj.type} s={obj.scale} selected={selected} />
+      {/* حلقه پایه — دیده شدن موقعیت روی زمین */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}>
+        <ringGeometry args={[Math.max(meta.w, meta.d) * 0.42 * obj.scale, Math.max(meta.w, meta.d) * 0.5 * obj.scale, 40]} />
+        <meshBasicMaterial color={selected ? "#fbbf24" : meta.edge} transparent opacity={0.35} side={THREE.DoubleSide} />
+      </mesh>
+      {selected && (
+        <Label3D
+          position={[0, meta.h * obj.scale + 2.2, 0]}
+          text={meta.label}
+          color="#111111"
+          bg="#fbbf24"
+          height={1.15}
+        />
+      )}
+    </group>
+  );
+}
+
+/** لایه کامل تجهیزات محوطه */
+function SceneObjectsLayer() {
+  const objects = useLiftStore((s) => s.sceneObjects);
+  const selectedId = useView3D((s) => s.selectedObjectId);
+  const setSelected = useView3D((s) => s.set);
+  return (
+    <group>
+      {objects.map((o) => (
+        <SceneObjectItem
+          key={o.id}
+          obj={o}
+          selected={selectedId === o.id}
+          onSelect={() => setSelected({ selectedObjectId: o.id })}
+        />
+      ))}
+    </group>
+  );
+}
+
+// ───────────────────────── برچسب زنده زاویه بوم (داخل صحنه) ─────────────────────────
+function BoomAngleLabel({
+  isTower,
+  boomDeg,
+  boomLen,
+  pivotOffsetM,
+  pivotHeightM,
+  radiusM,
+}: {
+  isTower: boolean;
+  boomDeg: number;
+  boomLen: number;
+  pivotOffsetM: number;
+  pivotHeightM: number;
+  radiusM: number;
+}) {
+  const text = isTower
+    ? `بوم افقی — Trolley ${radiusM.toFixed(1)}m`
+    : `∠ بوم ${boomDeg.toFixed(0)}° — ${boomLen.toFixed(0)}m`;
+  const dist = boomLen * 0.5 + 2.2;
+  const pos: [number, number, number] = isTower
+    ? [boomLen * 0.5, pivotHeightM + 3.4, 0]
+    : [
+        pivotOffsetM + Math.cos(boomDeg * D2R) * dist,
+        pivotHeightM + Math.sin(boomDeg * D2R) * dist + 1.5,
+        0,
+      ];
+  return (
+    <Label3D
+      position={pos}
+      text={text}
+      color="#fde68a"
+      bg="rgba(26,15,2,0.85)"
+      border="rgba(245,158,11,0.55)"
+      height={1.15}
+    />
+  );
+}
+
 // ───────────────────────── موتور پخش انیمیشن جابجایی ─────────────────────────
 function SimDriver() {
   const active = useSim((s) => s.active);
@@ -369,9 +751,13 @@ function SimDriver() {
       simS.reset();
       return;
     }
-    const key = `${crane.id}|${s.inputs.boomLengthM}|${s.transfer.checkedAt}|${s.pickPoint.x},${s.pickPoint.z}|${s.placePoint.x},${s.placePoint.z}`;
+    const ox = s.cranePos?.x ?? 0;
+    const oz = s.cranePos?.z ?? 0;
+    const key = `${crane.id}|${s.inputs.boomLengthM}|${s.transfer.checkedAt}|${s.pickPoint.x},${s.pickPoint.z}|${s.placePoint.x},${s.placePoint.z}|${ox},${oz}`;
     if (local.current.key !== key || !local.current.tl) {
-      const start = staticPoseOf(crane, s.inputs, s.pickPoint);
+      // نقطه شروع نسبت به محل استقرار جرثقیل
+      const rel = { x: s.pickPoint.x - ox, z: s.pickPoint.z - oz };
+      const start = staticPoseOf(crane, s.inputs, rel);
       local.current.tl = buildTimeline(crane, s.inputs, s.transfer, start as SegPose);
       local.current.t = 0;
       local.current.key = key;
@@ -801,6 +1187,7 @@ function SceneContent() {
   const selectedId = useLiftStore((s) => s.selectedCraneId);
   const inputs = useLiftStore((s) => s.inputs);
   const result = useLiftStore((s) => s.result);
+  const cranePos = useLiftStore((s) => s.cranePos);
   const view = useView3D();
   const pick = useLiftStore((s) => s.pickPoint);
   const place = useLiftStore((s) => s.placePoint);
@@ -810,18 +1197,24 @@ function SceneContent() {
   const customCranes = useLiftStore((s) => s.customCranes);
   const crane = getCraneById(selectedId, customCranes);
 
+  // مرکز استقرار جرثقیل (قابل جابه‌جایی — پیش‌فرض: مرکز صحنه)
+  const o: GroundPoint = cranePos ?? { x: 0, z: 0 };
+
   // وقتی پرچم A ثبت شده و شبیه‌سازی اجرا نمی‌شود، جرثقیل رو به نقطه برداشت می‌ایستد
+  // (شعاع و زاویه چرخش «نسبت به محل جرثقیل» محاسبه می‌شود)
   const effInputs = useMemo(() => {
     if (pick && !simActive && !simPose) {
+      const rx = pick.x - o.x;
+      const rz = pick.z - o.z;
       return {
         ...inputs,
         radiusMode: "radius" as const,
-        radiusM: Math.hypot(pick.x, pick.z),
-        slewAngleDeg: slewDegFor(pick.x, pick.z),
+        radiusM: Math.hypot(rx, rz),
+        slewAngleDeg: slewDegFor(rx, rz),
       };
     }
     return inputs;
-  }, [pick, inputs, simActive, simPose]);
+  }, [pick, inputs, simActive, simPose, o.x, o.z]);
 
   const geo = useMemo(() => (crane ? solveGeometry(crane, effInputs) : null), [crane, effInputs]);
 
@@ -865,9 +1258,9 @@ function SceneContent() {
   const exRadius = Math.max(geo.tipRadiusM || hookX, effInputs.boomLengthM) + 3;
   const radiusDisp = pose ? pose.radiusM : geo.radiusM;
 
-  // مختصات جهانی بار برای خط شعاع
-  const loadWorldX = Math.cos(-slewRad) * hookX;
-  const loadWorldZ = Math.sin(-slewRad) * hookX;
+  // مختصات جهانی بار برای خط شعاع (نسبت به محل استقرار جرثقیل)
+  const loadWorldX = o.x + Math.cos(-slewRad) * hookX;
+  const loadWorldZ = o.z + Math.sin(-slewRad) * hookX;
 
   const handleGroundClick = (x: number, z: number) => {
     const st = useLiftStore.getState();
@@ -881,6 +1274,17 @@ function SceneContent() {
     } else if (vw.flagMode === "place") {
       st.setPlacePoint(p);
       vw.setFlagMode("off");
+    } else if (vw.flagMode === "moveCrane") {
+      // جابه‌جایی جرثقیل — پوز شبیه‌سازی قبلی هم پاک می‌شود
+      st.setCranePos(p);
+      useSim.getState().reset();
+      vw.clearMode();
+    } else if (vw.flagMode === "object" && vw.pendingObjectType) {
+      // افزودن تجهیز محوطه — حالت فعال می‌ماند تا چند تجهیز پشت‌سرهم گذاشته شود
+      st.addSceneObject(vw.pendingObjectType, x, z);
+    } else {
+      // کلیک ساده: لغو انتخاب تجهیز
+      if (vw.selectedObjectId) vw.set({ selectedObjectId: null });
     }
   };
 
@@ -888,7 +1292,7 @@ function SceneContent() {
     <>
       <CaptureRegister />
       <SimDriver />
-      <CameraRig radius={hookX} height={hookY} frozen={simActive} />
+      <CameraRig radius={hookX} height={hookY} frozen={simActive} center={[o.x, o.z]} />
       <color attach="background" args={["#18181b"]} />
       <fog attach="fog" args={["#18181b", 100, 280]} />
       <hemisphereLight args={["#e7e5e4", "#1c1917", 0.55]} />
@@ -907,19 +1311,36 @@ function SceneContent() {
       />
       <directionalLight position={[-30, 25, -20]} intensity={0.35} color="#fef3c7" />
 
-      {/* دنیای شیب‌دار (زمین + جرثقیل + بار) */}
+      {/* دنیای شیب‌دار (زمین + جرثقیل + بار + تجهیزات) */}
       <group rotation={[0, 0, slopeRad]}>
         <Ground flagMode={view.flagMode} onGroundClick={handleGroundClick} />
-        {view.exclusion && <ExclusionZone radiusM={exRadius} />}
 
-        {/* حلقه شعاع و پرچم نقطه A (برداشت) */}
-        {pick && view.radiusLine && <RadiusRing radiusM={Math.hypot(pick.x, pick.z)} color="#f59e0b" />}
+        {/* تجهیزات محوطه (نیروگاه / پالایشگاه) */}
+        <SceneObjectsLayer />
+
+        {/* منطقه ممنوعه — حول محل استقرار جرثقیل */}
+        {view.exclusion && (
+          <group position={[o.x, 0, o.z]}>
+            <ExclusionZone radiusM={exRadius} />
+          </group>
+        )}
+
+        {/* حلقه شعاع و پرچم نقطه A (برداشت) — شعاع نسبت به جرثقیل */}
+        {pick && view.radiusLine && (
+          <group position={[o.x, 0, o.z]}>
+            <RadiusRing radiusM={Math.hypot(pick.x - o.x, pick.z - o.z)} color="#f59e0b" />
+          </group>
+        )}
         {pick && (
           <FlagMarker x={pick.x} z={pick.z} label="A — برداشت" color="#f59e0b" showLabels={view.labels} />
         )}
 
         {/* حلقه شعاع و پرچم نقطه B (جایگذاری) */}
-        {place && view.radiusLine && <RadiusRing radiusM={Math.hypot(place.x, place.z)} color="#10b981" />}
+        {place && view.radiusLine && (
+          <group position={[o.x, 0, o.z]}>
+            <RadiusRing radiusM={Math.hypot(place.x - o.x, place.z - o.z)} color="#10b981" />
+          </group>
+        )}
         {place && (
           <FlagMarker x={place.x} z={place.z} label="B — جایگذاری" color="#10b981" showLabels={view.labels} />
         )}
@@ -948,11 +1369,11 @@ function SceneContent() {
           />
         )}
 
-        {/* خط شعاع کاری روی زمین */}
+        {/* خط شعاع کاری روی زمین — از محل جرثقیل تا بار */}
         {view.radiusLine && (
           <group>
             <Line
-              points={[[0, 0.06, 0], [loadWorldX, 0.06, loadWorldZ]]}
+              points={[[o.x, 0.06, o.z], [loadWorldX, 0.06, loadWorldZ]]}
               color="#f59e0b"
               lineWidth={2}
               dashed
@@ -961,7 +1382,7 @@ function SceneContent() {
             />
             {view.labels && (
               <Label3D
-                position={[loadWorldX / 2, 0.8, loadWorldZ / 2]}
+                position={[(o.x + loadWorldX) / 2, 0.8, (o.z + loadWorldZ) / 2]}
                 text={`R = ${radiusDisp.toFixed(1)} m`}
                 color="#fbbf24"
                 bg="rgba(15,10,2,0.78)"
@@ -971,8 +1392,8 @@ function SceneContent() {
           </group>
         )}
 
-        {/* جرثقیل با دوران سوپراستراکچر */}
-        <group rotation={[0, slewRad, 0]}>
+        {/* جرثقیل با دوران سوپراستراکچر — روی محل استقرار انتخابی */}
+        <group position={[o.x, 0, o.z]} rotation={[0, slewRad, 0]}>
           {crane.type === "mobile" && (
             <MobileCrane
               specs={crane.specs}
@@ -995,6 +1416,17 @@ function SceneContent() {
           )}
           {crane.type === "tower" && (
             <TowerCrane specs={crane.specs} jibLengthM={boomLen} radiusM={hookX} />
+          )}
+          {/* برچسب زنده زاویه بوم و طول بوم داخل صحنه */}
+          {view.labels && (
+            <BoomAngleLabel
+              isTower={isTower}
+              boomDeg={fbAngle}
+              boomLen={boomLen}
+              pivotOffsetM={crane.specs.pivotOffsetM}
+              pivotHeightM={isTower ? (crane.specs.freestandingHookHeightM ?? 50) : crane.specs.pivotHeightM}
+              radiusM={radiusDisp}
+            />
           )}
           <HookAndLoad
             inputs={inputs}

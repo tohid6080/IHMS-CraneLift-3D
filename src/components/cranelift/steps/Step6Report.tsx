@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * CraneLift Pro 3D — مرحله ۶: گزارش PDF
+ * IHMS CraneLift 3D — مرحله ۶: گزارش PDF
  * -----------------------------------------------------------
  * تکمیل متادیتای پروژه، پیش‌نمایش تصاویر ثبت‌شده، ساخت پیش‌نمایش
  * گزارش و دانلود PDF حرفه‌ای (jsPDF + html2canvas).
@@ -51,6 +51,8 @@ export default function Step6Report() {
   const screenshot3D = useLiftStore((s) => s.screenshot3D);
   const chartImage = useLiftStore((s) => s.chartImage);
   const transfer = useLiftStore((s) => s.transfer);
+  const sceneObjects = useLiftStore((s) => s.sceneObjects);
+  const cranePos = useLiftStore((s) => s.cranePos);
   const license = useLiftStore((s) => s.license);
   const usage = useLiftStore((s) => s.usage);
   const consume = useLiftStore((s) => s.consume);
@@ -83,6 +85,8 @@ export default function Step6Report() {
     chartImage,
     transfer,
     planType: license.plan,
+    sceneObjects,
+    cranePos,
   });
 
   const handleCapture = async () => {

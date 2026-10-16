@@ -1,16 +1,17 @@
 "use client";
 
 /**
- * CraneLift Pro 3D — پنل نمایش سه‌بعدی
+ * IHMS CraneLift 3D — پنل نمایش سه‌بعدی
  * -----------------------------------------------------------
- * کانواس سه‌بعدی (client-only) + آمار سریع + دکمه بزرگ تحلیل (Play).
- * اگر هر دو پرچم A/B ثبت شده باشند، پس از تحلیل، شبیه‌سازی حرکت جرثقیل
- * (برداشت از A و جایگذاری در B) هم اجرا می‌شود (مخصوص نسخه حرفه‌ای).
+ * کانواس سه‌بعدی (client-only) + HUD زنده (زاویه بوم، طول بوم، شعاع،
+ * ارتفاع قلاب، زاویه چرخش و فاز حرکت) + دکمه بزرگ «تحلیل لیفت / Play».
+ * با یک دکمه همه‌چیز اجرا می‌شود: تحلیل کامل + (در صورت ثبت دو پرچم A/B)
+ * شبیه‌سازی حرکت جرثقیل و نمایش نتیجه مجاز/غیرمجاز در پایان حرکت.
  */
 
 import dynamic from "next/dynamic";
 import { useState } from "react";
-import { Play, Box, AlertTriangle, Flag, Loader2 } from "lucide-react";
+import { Play, Box, AlertTriangle, Loader2, MapPin, Compass, Move, Package } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,9 +20,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useLiftStore } from "@/lib/cranelift/store";
 import { getCraneById } from "@/lib/cranelift/cranes";
 import { solveGeometry, STATUS_COLORS, STATUS_LABELS } from "@/lib/cranelift/analysis";
-import { isPro, quotaCheck } from "@/lib/cranelift/licensing";
-import { runAnalysis, startTransferSim } from "./run-analysis";
+import { playUnified } from "./run-analysis";
 import { useSim } from "./three/sim-store";
+import { useView3D } from "./three/view3d-store";
 import { useUiStore } from "./ui-store";
 import { useToast } from "@/hooks/use-toast";
 
@@ -35,20 +36,45 @@ const CraneScene = dynamic(() => import("./three/CraneScene"), {
   ),
 });
 
+/** یک خانه HUD زنده */
+function HudCell({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+}) {
+  return (
+    <div className="rounded-md bg-black/45 px-2 py-1 backdrop-blur-sm">
+      <div className="text-[9.5px] leading-none text-zinc-400">{label}</div>
+      <div
+        className={`mt-0.5 text-[12.5px] font-bold leading-none tabular-nums ${
+          accent ? "text-amber-400" : "text-zinc-100"
+        }`}
+        dir="ltr"
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
 export default function ScenePanel() {
   const { toast } = useToast();
   const [running, setRunning] = useState(false);
   const selectedId = useLiftStore((s) => s.selectedCraneId);
   const inputs = useLiftStore((s) => s.inputs);
   const result = useLiftStore((s) => s.result);
-  const setStep = useLiftStore((s) => s.setStep);
+  const cranePos = useLiftStore((s) => s.cranePos);
   const license = useLiftStore((s) => s.license);
-  const usage = useLiftStore((s) => s.usage);
-  const consume = useLiftStore((s) => s.consume);
   const pickPoint = useLiftStore((s) => s.pickPoint);
   const placePoint = useLiftStore((s) => s.placePoint);
   const simActive = useSim((s) => s.active);
   const simPose = useSim((s) => s.pose);
+  const flagMode = useView3D((s) => s.flagMode);
+  const pendingObjectType = useView3D((s) => s.pendingObjectType);
   const setUpgradeOpen = useUiStore((s) => s.setUpgradeOpen);
 
   const customCranes = useLiftStore((s) => s.customCranes);
@@ -58,64 +84,33 @@ export default function ScenePanel() {
   const bothFlags = !!(pickPoint && placePoint);
 
   const handlePlay = async () => {
-    if (!crane) {
-      toast({ title: "ابتدا جرثقیل انتخاب کنید", variant: "destructive" });
-      return;
-    }
-    // سهمیه نسخه رایگان
-    const q = quotaCheck(license.plan, usage, "analysis");
-    if (!q.ok) {
-      toast({
-        title: "سهمیه تحلیل رایگان امروز تمام شد",
-        description: `سقف نسخه رایگان: ${q.limit} تحلیل در روز. برای تحلیل نامحدود و شبیه‌سازی حرکت، ارتقا دهید.`,
-        variant: "destructive",
-      });
-      setUpgradeOpen(true);
-      return;
-    }
+    if (running || simActive) return;
     setRunning(true);
     try {
-      consume("analysis");
-      const r = await runAnalysis();
-      if (!r) return;
-      const titles = {
-        allowed: "✅ لیفت مجاز است",
-        caution: "⚠️ نیازمند بررسی بیشتر",
-        "not-allowed": "⛔ لیفت غیرمجاز است",
-      } as const;
-      toast({
-        title: titles[r.status],
-        description:
-          r.status === "allowed"
-            ? `استفاده از ظرفیت: ${r.utilizationPct?.toFixed(0)}٪`
-            : r.warnings.find((w) => w.level === "danger")?.message ?? r.conclusion,
-        variant: r.status === "not-allowed" ? "destructive" : "default",
+      await playUnified({
+        toast,
+        onQuotaExceeded: () => setUpgradeOpen(true),
       });
-
-      if (bothFlags) {
-        // شبیه‌سازی حرکت دو پرچم — مخصوص Pro
-        if (!isPro(license)) {
-          toast({
-            title: "شبیه‌سازی حرکت مخصوص نسخه حرفه‌ای است",
-            description:
-              "با دو پرچم A و B، حرکت کامل جرثقیل (برداشت تا جایگذاری) شبیه‌سازی می‌شود.",
-            variant: "destructive",
-          });
-          setUpgradeOpen(true);
-          setStep(4);
-          return;
-        }
-        const st = startTransferSim();
-        if (st === "started") {
-          setStep(3); // رفتن به مرحله صحنه برای تماشای حرکت
-          return;
-        }
-      }
-      setStep(4);
     } finally {
       setRunning(false);
     }
   };
+
+  // ── داده‌های HUD: حین حرکت از پوز زنده، وگرنه از هندسه ایستا ──
+  const boomDeg = simPose ? simPose.boomDeg : geo?.ok && crane?.type !== "tower" ? (geo?.boomAngleDeg ?? null) : null;
+  const radius = simPose ? simPose.radiusM : geo?.radiusM ?? null;
+  const hookH = simPose ? simPose.hookTopY : geo?.tipHeightM ?? null;
+  const slewDeg = simPose ? ((simPose.slewDeg % 360) + 360) % 360 : inputs.slewAngleDeg;
+  const modeBanner =
+    flagMode === "pick"
+      ? "روی زمین کلیک کنید: پرچم A (برداشت)"
+      : flagMode === "place"
+        ? "روی زمین کلیک کنید: پرچم B (جایگذاری)"
+        : flagMode === "moveCrane"
+          ? "روی زمین کلیک کنید: محل جدید جرثقیل"
+          : flagMode === "object" && pendingObjectType
+            ? "روی زمین کلیک کنید: افزودن تجهیز (حالت فعال می‌ماند)"
+            : null;
 
   return (
     <Card className="overflow-hidden border-2">
@@ -125,18 +120,55 @@ export default function ScenePanel() {
           نمای سه‌بعدی لیفت
         </CardTitle>
         {result && (
-          <Badge
-            className="text-black"
-            style={{ backgroundColor: STATUS_COLORS[result.status] }}
-          >
+          <Badge className="text-black" style={{ backgroundColor: STATUS_COLORS[result.status] }}>
             {STATUS_LABELS[result.status]}
           </Badge>
         )}
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="h-[340px] overflow-hidden rounded-xl border border-border bg-[#18181b] lg:h-[420px]">
+        <div className="relative h-[340px] overflow-hidden rounded-xl border border-border bg-[#18181b] lg:h-[420px]">
           {crane ? (
-            <CraneScene />
+            <>
+              <CraneScene />
+
+              {/* ── HUD زنده مشخصات (زاویه بوم و ...) ── */}
+              <div className="pointer-events-none absolute end-2 top-2 flex w-[142px] flex-col gap-1">
+                <HudCell
+                  label="زاویه بوم"
+                  value={crane?.type === "tower" ? "افقی" : boomDeg != null ? `∠ ${boomDeg.toFixed(0)}°` : "—"}
+                  accent
+                />
+                <HudCell label="طول بوم" value={`${inputs.boomLengthM.toFixed(1)} m`} />
+                <HudCell label="شعاع" value={radius != null ? `R ${radius.toFixed(1)} m` : "—"} />
+                <HudCell label="نوک بوم / قلاب" value={hookH != null ? `${hookH.toFixed(1)} m` : "—"} />
+                <HudCell label="چرخش" value={`↻ ${slewDeg.toFixed(0)}°`} />
+                <HudCell label="بار کل" value={`${grossT.toFixed(1)} t`} accent />
+              </div>
+
+              {/* فاز حرکت */}
+              {(simActive || (simPose && simPose.progress < 1)) && (
+                <div className="absolute inset-x-2 bottom-2 rounded-lg border border-amber-500/40 bg-black/60 p-2 backdrop-blur-sm">
+                  <div className="flex items-center justify-between gap-2 text-[11px]">
+                    <span className="flex items-center gap-1.5 font-bold text-amber-400">
+                      {simActive ? <Loader2 className="size-3 animate-spin" /> : null}
+                      {simPose?.phaseLabel ?? "آماده‌سازی حرکت..."}
+                    </span>
+                    <span className="text-zinc-300" dir="ltr">
+                      R {simPose?.radiusM.toFixed(1) ?? "—"} m · ∠ {simPose?.boomDeg.toFixed(0) ?? "—"}°
+                    </span>
+                  </div>
+                  <Progress value={(simPose?.progress ?? 0) * 100} className="mt-1.5 h-1" />
+                </div>
+              )}
+
+              {/* راهنمای حالت کلیک */}
+              {modeBanner && (
+                <div className="absolute inset-x-2 top-2 flex items-center justify-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/90 px-3 py-1.5 text-[11px] font-bold text-black shadow-lg">
+                  <MapPin className="size-3.5" />
+                  {modeBanner}
+                </div>
+              )}
+            </>
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
               <AlertTriangle className="size-10 text-amber-500/60" />
@@ -145,45 +177,38 @@ export default function ScenePanel() {
           )}
         </div>
 
-        {/* نوار فاز شبیه‌سازی حرکت */}
-        {(simActive || simPose) && (
-          <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-2.5">
-            <div className="flex items-center justify-between gap-2 text-xs">
-              <span className="flex items-center gap-1.5 font-bold text-amber-500">
-                {simActive ? <Loader2 className="size-3.5 animate-spin" /> : <Flag className="size-3.5" />}
-                {simPose?.phaseLabel ?? "آماده‌سازی حرکت..."}
-              </span>
-              <span className="text-muted-foreground" dir="ltr">
-                R {simPose?.radiusM.toFixed(1) ?? "—"} m · Boom {simPose?.boomDeg.toFixed(0) ?? "—"}°
-              </span>
-            </div>
-            <Progress value={(simPose?.progress ?? 0) * 100} className="mt-2 h-1.5" />
-          </div>
-        )}
-
         {/* آمار سریع */}
         <div className="grid grid-cols-3 gap-2 text-center">
           <div className="rounded-lg border bg-muted/40 px-2 py-1.5">
-            <div className="text-[11px] text-muted-foreground">شعاع</div>
+            <div className="flex items-center justify-center gap-1 text-[11px] text-muted-foreground">
+              <Compass className="size-3" />
+              شعاع
+            </div>
             <div className="text-sm font-bold" dir="ltr">
               {geo?.ok ? `${geo.radiusM.toFixed(1)} m` : "—"}
             </div>
           </div>
           <div className="rounded-lg border bg-muted/40 px-2 py-1.5">
-            <div className="text-[11px] text-muted-foreground">بار کل</div>
-            <div className="text-sm font-bold text-amber-500" dir="ltr">
-              {grossT.toFixed(1)} t
+            <div className="flex items-center justify-center gap-1 text-[11px] text-muted-foreground">
+              <Move className="size-3" />
+              محل جرثقیل
+            </div>
+            <div className="text-sm font-bold" dir="ltr">
+              {cranePos ? `(${cranePos.x.toFixed(1)}, ${cranePos.z.toFixed(1)})` : "(0, 0)"}
             </div>
           </div>
           <div className="rounded-lg border bg-muted/40 px-2 py-1.5">
-            <div className="text-[11px] text-muted-foreground">ظرفیت مجاز</div>
+            <div className="flex items-center justify-center gap-1 text-[11px] text-muted-foreground">
+              <Package className="size-3" />
+              ظرفیت مجاز
+            </div>
             <div className="text-sm font-bold" dir="ltr">
               {result?.ratedCapacityT != null ? `${result.ratedCapacityT.toFixed(1)} t` : "—"}
             </div>
           </div>
         </div>
 
-        {/* دکمه بزرگ Play */}
+        {/* دکمه بزرگ Play — تحلیل + شبیه‌سازی + نتیجه، همه یکجا */}
         <Button
           size="lg"
           disabled={running || !crane || simActive}
@@ -197,12 +222,13 @@ export default function ScenePanel() {
               ? "در حال حرکت جرثقیل..."
               : "تحلیل لیفت / Play"}
         </Button>
-        <p className="text-center text-[11px] text-muted-foreground">
+        <p className="text-center text-[11px] leading-relaxed text-muted-foreground">
           {bothFlags
-            ? "دو پرچم ثبت شده — پس از تحلیل، حرکت کامل جرثقیل از A تا B شبیه‌سازی می‌شود."
-            : "برای شبیه‌سازی حرکت، در مرحله ۴ دو پرچم A و B روی زمین بگذارید."}
+            ? "دو پرچم ثبت شده — با Play، تحلیل کامل + حرکت جرثقیل از A تا B یکجا اجرا و در پایان نتیجه مجاز/غیرمجاز اعلام می‌شود."
+            : "با Play کل تحلیل اجرا می‌شود؛ برای شبیه‌سازی حرکت، دو پرچم A و B را در مرحله ۴ روی زمین بگذارید."}
           {" • "}
           چرخش: درگ • زوم: اسکرول
+          {license.plan === "free" ? " • سهمیه رایگان امروز: تحلیل+حرکت" : ""}
         </p>
       </CardContent>
     </Card>
