@@ -104,16 +104,67 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug
 
-      - name: Rename APK
+      # امضایِ release واقعی برایِ انتشار در کافه‌بازار — فقط اگر سکرت‌های
+      # زیر در ریپو تنظیم شده باشند (Settings → Secrets and variables →
+      # Actions): ANDROID_RELEASE_KEYSTORE_BASE64، ANDROID_RELEASE_KEY_ALIAS،
+      # ANDROID_RELEASE_KEY_PASSWORD. اگر تنظیم نشده باشند این مرحله و
+      # مرحله‌ی بعدی بی‌صدا رد می‌شوند و فقط همان APKِ debug تولید می‌شود —
+      # هرگز با کلیدِ debug (که داخلِ این ریپوی عمومی است) برایِ انتشارِ
+      # نهایی استفاده نکنید.
+      - name: Build release APK (signed)
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "ANDROID_RELEASE_* secrets not set — skipping signed release build. Only the debug APK was produced."
+            echo "HAS_RELEASE=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > android/app/release.keystore
+          cat >> android/app/build.gradle << GRADLE_EOF
+
+          // --- تزریق‌شده توسط build-android.yml: امضایِ release ---
+          android {
+              signingConfigs {
+                  release {
+                      storeFile file('release.keystore')
+                      storePassword '$KEY_PASSWORD'
+                      keyAlias '$KEY_ALIAS'
+                      keyPassword '$KEY_PASSWORD'
+                  }
+              }
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
+                  }
+              }
+          }
+          GRADLE_EOF
+          cd android && ./gradlew assembleRelease
+          echo "HAS_RELEASE=true" >> "$GITHUB_ENV"
+
+      - name: Rename APK(s)
         run: |
           mkdir -p out
-          cp android/app/build/outputs/apk/debug/app-debug.apk "out/ihms-cranelift3d-${{ github.event.inputs.version }}.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "out/ihms-cranelift3d-${{ github.event.inputs.version }}-debug.apk"
+          if [ "$HAS_RELEASE" = "true" ]; then
+            cp android/app/build/outputs/apk/release/app-release.apk "out/ihms-cranelift3d-${{ github.event.inputs.version }}.apk"
+          fi
           ls -lh out
 
-      - name: Upload APK artifact
+      - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ihms-cranelift3d-apk-${{ github.event.inputs.version }}
+          name: ihms-cranelift3d-apk-${{ github.event.inputs.version }}-debug
+          path: out/ihms-cranelift3d-${{ github.event.inputs.version }}-debug.apk
+
+      - name: Upload release APK artifact
+        if: env.HAS_RELEASE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ihms-cranelift3d-apk-${{ github.event.inputs.version }}-release
           path: out/ihms-cranelift3d-${{ github.event.inputs.version }}.apk
 
       - name: Publish GitHub Release
@@ -125,8 +176,15 @@ jobs:
           NOTES="${{ github.event.inputs.release_notes }}"
           if [ -z "$NOTES" ]; then NOTES="IHMS CraneLift 3D ${{ github.event.inputs.version }} (build ${{ github.event.inputs.version_code }})"; fi
           gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
-          gh release create "$TAG" "out/ihms-cranelift3d-${{ github.event.inputs.version }}.apk" \
-            --title "IHMS CraneLift 3D ${{ github.event.inputs.version }}" \
-            --notes "$NOTES"
-          echo "APK download URL:"
-          echo "https://github.com/${{ github.repository }}/releases/download/$TAG/ihms-cranelift3d-${{ github.event.inputs.version }}.apk"
+          if [ "$HAS_RELEASE" = "true" ]; then
+            gh release create "$TAG" \
+              "out/ihms-cranelift3d-${{ github.event.inputs.version }}.apk" \
+              "out/ihms-cranelift3d-${{ github.event.inputs.version }}-debug.apk" \
+              --title "IHMS CraneLift 3D ${{ github.event.inputs.version }}" \
+              --notes "$NOTES"
+          else
+            gh release create "$TAG" \
+              "out/ihms-cranelift3d-${{ github.event.inputs.version }}-debug.apk" \
+              --title "IHMS CraneLift 3D ${{ github.event.inputs.version }} (debug-signed only)" \
+              --notes "$NOTES"
+          fi
