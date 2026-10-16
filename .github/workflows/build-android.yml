@@ -122,6 +122,13 @@ jobs:
             echo "HAS_RELEASE=false" >> "$GITHUB_ENV"
             exit 0
           fi
+          # حذفِ هر \r/\n یا فاصله‌ی ابتدا/انتهاییِ احتمالی که هنگامِ
+          # کپی‌پیستِ مقدارِ Secret در رابطِ گیت‌هاب اضافه شده باشد — یک
+          # newlineِ اضافه داخلِ رشته‌ی تک‌کوتیشنِ Groovy باعثِ خطای
+          # «Unexpected character» در build.gradle می‌شود.
+          KEYSTORE_B64="$(printf '%s' "$KEYSTORE_B64" | tr -d '\n\r ')"
+          KEY_ALIAS="$(printf '%s' "$KEY_ALIAS" | tr -d '\n\r' | xargs)"
+          KEY_PASSWORD="$(printf '%s' "$KEY_PASSWORD" | tr -d '\n\r' | xargs)"
           echo "$KEYSTORE_B64" | base64 -d > android/app/release.keystore
           cat >> android/app/build.gradle << GRADLE_EOF
 
