@@ -5,8 +5,8 @@ import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import ir.cafebazaar.poolakey.Connection
 import ir.cafebazaar.poolakey.Payment
-import ir.cafebazaar.poolakey.PaymentConnection
 import ir.cafebazaar.poolakey.config.PaymentConfiguration
 import ir.cafebazaar.poolakey.config.SecurityCheck
 import ir.cafebazaar.poolakey.request.PurchaseRequest
@@ -20,11 +20,11 @@ import ir.cafebazaar.poolakey.request.PurchaseRequest
  * می‌کند (نه الگویِ قدیمی‌ترِ requestCode/onActivityResult که نسخه‌ی اولِ
  * این فایل از حافظه نوشته بود).
  *
- * هنوز در این سندباکس کامپایل/تست نشده (نیازمندِ Android SDK واقعی و یک
- * دستگاه با اپِ کافه‌بازار نصب‌شده است) — نام‌هایِ دقیقِ پراپرتی‌هایِ
- * شیِ purchaseEntity (purchaseToken/orderId) و نوعِ دقیقِ خروجیِ
- * payment.connect باید با IDE/اتوکامپلیت پس از افزودنِ وابستگیِ Poolakey
- * تأیید شوند — مستندِ ارائه‌شده نامِ دقیقِ این پراپرتی‌ها را مشخص نکرده بود.
+ * امضایِ API (نام‌هایِ callback، نوعِ خروجیِ payment.connect یعنی
+ * Connection، و پراپرتی‌هایِ PurchaseInfo یعنی purchaseToken/orderId/
+ * productId) مستقیماً از سورسِ واقعیِ github.com/cafebazaar/Poolakey
+ * تأیید شد — نه فقط حدس. تنها چیزی که هنوز روی دستگاهِ واقعی تست نشده،
+ * خودِ جریانِ عملیِ خرید (دیالوگِ بازار، لغو، بازگشت به اپ) است.
  *
  * ── مواردی که باید پیش از استفاده پر شوند ──
  *  - BAZAAR_RSA_PUBLIC_KEY : کلیدِ RSAِ عمومیِ اپ از پیشخوانِ
@@ -49,7 +49,7 @@ class BazaarBillingPlugin : Plugin() {
     }
 
     private val payment by lazy { Payment(context = context, config = paymentConfig) }
-    private var paymentConnection: PaymentConnection? = null
+    private var paymentConnection: Connection? = null
 
     override fun load() {
         super.load()
