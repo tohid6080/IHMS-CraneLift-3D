@@ -51,6 +51,47 @@ jobs:
       - name: Add Android platform
         run: npx cap add android
 
+      # سیم‌کشیِ خریدِ درون‌برنامه‌ایِ کافه‌بازار (Poolakey) — فعال‌سازیِ
+      # Kotlin در پروژه‌ی اندروید، افزودنِ وابستگیِ Poolakey، کپیِ پلاگینِ
+      # android-native/bazaar-billing/BazaarBillingPlugin.kt به داخلِ
+      # android/app و ثبتِ آن در MainActivity. این مرحله در هر دو APKِ
+      # debug و release اعمال می‌شود.
+      - name: Wire Bazaar billing plugin (Poolakey)
+        run: |
+          set -e
+          # ۱) افزودنِ classpathِ کاتلین به build.gradleِ سطحِ پروژه
+          sed -i "/classpath 'com.google.gms:google-services/a\\        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24'" android/build.gradle
+
+          # ۲) اعمالِ پلاگینِ kotlin-android و افزودنِ وابستگیِ Poolakey در build.gradleِ اپ
+          sed -i "s/apply plugin: 'com.android.application'/apply plugin: 'com.android.application'\napply plugin: 'kotlin-android'/" android/app/build.gradle
+          sed -i "/implementation project(':capacitor-cordova-android-plugins')/a\\    implementation \"org.jetbrains.kotlin:kotlin-stdlib:1.9.24\"\\n    implementation \"ir.cafebazaar.poolakey:poolakey:1.6.0\"" android/app/build.gradle
+
+          # ۳) کپیِ سورسِ Kotlinِ پلاگین
+          mkdir -p android/app/src/main/java/com/ihms/cranelift3d
+          cp android-native/bazaar-billing/BazaarBillingPlugin.kt android/app/src/main/java/com/ihms/cranelift3d/BazaarBillingPlugin.kt
+
+          # ۴) ثبتِ پلاگین در MainActivity
+          cat > android/app/src/main/java/com/ihms/cranelift3d/MainActivity.java << 'JAVA_EOF'
+          package com.ihms.cranelift3d;
+
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(BazaarBillingPlugin.class);
+                  super.onCreate(savedInstanceState);
+              }
+          }
+          JAVA_EOF
+
+          echo "----- android/build.gradle (buildscript deps) -----"
+          grep -A5 "dependencies {" android/build.gradle | head -8
+          echo "----- android/app/build.gradle (head + poolakey dep) -----"
+          head -3 android/app/build.gradle
+          grep -n "poolakey\|kotlin-stdlib" android/app/build.gradle
+
       # کلیدِ امضای debug ثابت (کامیت‌شده در ریپو، رمز استاندارد "android") —
       # بدون این، هر اجرای CI یک debug.keystore تصادفی می‌سازد و امضای
       # APKها فرق می‌کند، یعنی اندروید اجازه‌ی نصبِ آپدیت روی نسخه‌ی قبلی را
