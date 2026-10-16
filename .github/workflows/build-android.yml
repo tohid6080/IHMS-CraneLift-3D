@@ -1,0 +1,132 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "شماره نسخه (versionName) — مثل 1.0.0"
+        required: true
+        default: "1.0.0"
+      version_code:
+        description: "versionCode عددی (باید از نسخه‌ی قبلی بزرگ‌تر باشد)"
+        required: true
+        default: "1"
+      release_notes:
+        description: "Release Notes — تغییرات این نسخه (اختیاری)"
+        required: false
+        default: ""
+      publish_release:
+        description: "یک GitHub Release عمومی هم ساخته شود؟"
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build web app (static export)
+        run: npm run build
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Add Android platform
+        run: npx cap add android
+
+      # کلیدِ امضای debug ثابت (کامیت‌شده در ریپو، رمز استاندارد "android") —
+      # بدون این، هر اجرای CI یک debug.keystore تصادفی می‌سازد و امضای
+      # APKها فرق می‌کند، یعنی اندروید اجازه‌ی نصبِ آپدیت روی نسخه‌ی قبلی را
+      # نمی‌دهد. این فقط برای توزیعِ تستی/دستی (sideload) است — برای انتشارِ
+      # نهایی روی کافه‌بازار باید یک keystoreِ release جدا و محرمانه (که در
+      # این فایل نیست) ساخته و به‌عنوانِ GitHub Secret اضافه شود.
+      - name: Use stable debug signing key
+        run: |
+          mkdir -p ~/.android
+          cp android-signing/debug.keystore ~/.android/debug.keystore
+          cp android-signing/debug.keystore android/app/debug.keystore
+          cat >> android/app/build.gradle << 'GRADLE_EOF'
+
+          // --- تزریق‌شده توسط build-android.yml: امضایِ debug ثابت و صریح ---
+          android {
+              signingConfigs {
+                  debug {
+                      storeFile file('debug.keystore')
+                      storePassword 'android'
+                      keyAlias 'androiddebugkey'
+                      keyPassword 'android'
+                  }
+              }
+              buildTypes {
+                  debug {
+                      signingConfig signingConfigs.debug
+                  }
+              }
+          }
+          GRADLE_EOF
+          echo "Stable debug keystore in place."
+
+      - name: Set app version in Gradle
+        run: |
+          GRADLE=android/app/build.gradle
+          sed -i "s/versionCode .*/versionCode ${{ github.event.inputs.version_code }}/" "$GRADLE"
+          sed -i "s/versionName .*/versionName \"${{ github.event.inputs.version }}\"/" "$GRADLE"
+          echo "----- versions in build.gradle -----"
+          grep -E "versionCode|versionName" "$GRADLE"
+
+      - name: Generate Splash Screen assets
+        run: npx capacitor-assets generate --android
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x android/gradlew
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Rename APK
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/debug/app-debug.apk "out/ihms-cranelift3d-${{ github.event.inputs.version }}.apk"
+          ls -lh out
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ihms-cranelift3d-apk-${{ github.event.inputs.version }}
+          path: out/ihms-cranelift3d-${{ github.event.inputs.version }}.apk
+
+      - name: Publish GitHub Release
+        if: ${{ github.event.inputs.publish_release == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ github.event.inputs.version }}"
+          NOTES="${{ github.event.inputs.release_notes }}"
+          if [ -z "$NOTES" ]; then NOTES="IHMS CraneLift 3D ${{ github.event.inputs.version }} (build ${{ github.event.inputs.version_code }})"; fi
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" "out/ihms-cranelift3d-${{ github.event.inputs.version }}.apk" \
+            --title "IHMS CraneLift 3D ${{ github.event.inputs.version }}" \
+            --notes "$NOTES"
+          echo "APK download URL:"
+          echo "https://github.com/${{ github.repository }}/releases/download/$TAG/ihms-cranelift3d-${{ github.event.inputs.version }}.apk"

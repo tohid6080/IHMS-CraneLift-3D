@@ -1,0 +1,22 @@
+{
+  "appId": "com.ihms.cranelift3d",
+  "appName": "IHMS CraneLift 3D",
+  "webDir": "out",
+  "loggingBehavior": "none",
+  "android": {
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 2000,
+      "launchAutoHide": true,
+      "backgroundColor": "#0E2A3F",
+      "androidScaleType": "CENTER_INSIDE",
+      "splashFullScreen": true,
+      "splashImmersive": true,
+      "androidSplashResourceName": "splash",
+      "useDialog": false
+    }
+  }
+}

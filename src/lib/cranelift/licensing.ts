@@ -1,35 +1,22 @@
 /**
  * IHMS CraneLift 3D — موتور لایسنس و محدودیت نسخه رایگان (Freemium)
  * -----------------------------------------------------------
- * طرح پیاده‌سازی‌شده: رایگان تا سقف مشخص + کد فعال‌سازی Pro (پرداخت یک‌بار).
- * کدها در نسخه دمو داخل کد هستند؛ در نسخه تجاری باید از سرور اعتبارسنجی شوند.
+ * طرح: رایگان تا سقف مشخص + خریدِ یک‌بارِ نسخه‌ی Pro از طریقِ خریدِ درون‌برنامه‌ایِ
+ * رسمیِ کافه‌بازار (Poolakey). فعال‌سازی فقط از مسیرِ پلاگینِ نیتیوِ
+ * BazaarBilling انجام می‌شود (ر.ک. android/BazaarBillingPlugin) — هیچ کدِ
+ * فعال‌سازیِ قابلِ‌واردکردن توسطِ کاربر در این نسخه وجود ندارد، چون چنین کدی
+ * همیشه در باندلِ کلاینت قابلِ‌استخراج است و قابلِ‌دورزدن می‌شود.
  */
 
 export type PlanType = "free" | "pro";
 
 export interface LicenseState {
   plan: PlanType;
-  code?: string;
+  purchaseToken?: string; // توکنِ خریدِ بازار، برای ارجاعِ احتمالیِ آینده (پشتیبانی/رفاند)
   activatedAt?: string; // ISO
 }
 
 export const DEFAULT_LICENSE: LicenseState = { plan: "free" };
-
-/** کدهای فعال‌سازی نمونه (دمو) — در نسخه تجاری به‌جای این لیست، اعتبارسنجی سروری قرار می‌گیرد */
-export const PRO_DEMO_CODES = [
-  "CLP-PRO-2024-0007",
-  "CLP-PRO-2024-1042",
-  "CLP-PRO-2024-3391",
-  "CLP-LIFE-2024-0001",
-];
-
-export function normalizeCode(code: string): string {
-  return code.trim().toUpperCase().replace(/\s+/g, "");
-}
-
-export function isValidCode(code: string): boolean {
-  return PRO_DEMO_CODES.includes(normalizeCode(code));
-}
 
 // ───────────────────────── سهمیه نسخه رایگان ─────────────────────────
 

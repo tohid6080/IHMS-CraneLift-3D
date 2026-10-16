@@ -1,14 +1,16 @@
 "use client";
 
 /**
- * IHMS CraneLift 3D — دیالوگ ارتقا (پلن‌ها + فعال‌سازی کد)
+ * IHMS CraneLift 3D — دیالوگ ارتقا (پلن‌ها + خرید نسخه‌ی حرفه‌ای)
  * -----------------------------------------------------------
- * جدول مقایسه پلن‌ها (رایگان / حرفه‌ای / سازمانی) و ورود کد فعال‌سازی.
- * کدهای دمو داخل licensing.ts هستند؛ در نسخه تجاری جای اعتبارسنجی سروری می‌گیرد.
+ * جدول مقایسه پلن‌ها (رایگان / حرفه‌ای / سازمانی) و دکمه‌ی خریدِ واقعی از
+ * طریقِ خریدِ درون‌برنامه‌ایِ کافه‌بازار (Poolakey). فعال‌سازی فقط پس از
+ * بازگشتِ نتیجه‌ی موفق از پلاگینِ نیتیو انجام می‌شود — هیچ کدِ دستی/دموی
+ * قابلِ‌دورزدن در این نسخه وجود ندارد.
  */
 
 import { useState } from "react";
-import { Check, Crown, KeyRound, X, Loader2, BadgeCheck } from "lucide-react";
+import { Check, Crown, X, Loader2, BadgeCheck, ShoppingBag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,10 +19,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useLiftStore } from "@/lib/cranelift/store";
-import { PLANS, PRO_DEMO_CODES } from "@/lib/cranelift/licensing";
+import { PLANS } from "@/lib/cranelift/licensing";
+import { isNativeBillingAvailable, purchaseProViaBazaar } from "@/lib/cranelift/bazaarBilling";
 import { useToast } from "@/hooks/use-toast";
 
 export default function UpgradeDialog({
@@ -32,33 +34,25 @@ export default function UpgradeDialog({
 }) {
   const { toast } = useToast();
   const license = useLiftStore((s) => s.license);
-  const activate = useLiftStore((s) => s.activate);
-  const [code, setCode] = useState("");
+  const activatePro = useLiftStore((s) => s.activatePro);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const handleActivate = () => {
+  const handlePurchase = async () => {
     setError(null);
-    if (!code.trim()) {
-      setError("کد فعال‌سازی را وارد کنید.");
-      return;
-    }
     setBusy(true);
-    // تأخیر کوتاه برای حس اعتبارسنجی
-    setTimeout(() => {
-      const ok = activate(code);
-      setBusy(false);
-      if (ok) {
-        toast({
-          title: "🎉 نسخه حرفه‌ای فعال شد",
-          description: "همه امکانات Pro بدون محدودیت در دسترس است.",
-        });
-        setCode("");
-        onOpenChange(false);
-      } else {
-        setError("کد واردشده معتبر نیست. کد را از فروشنده دریافت کنید.");
-      }
-    }, 450);
+    const res = await purchaseProViaBazaar();
+    setBusy(false);
+    if (res.success && res.purchaseToken) {
+      activatePro({ purchaseToken: res.purchaseToken, orderId: res.orderId });
+      toast({
+        title: "🎉 نسخه حرفه‌ای فعال شد",
+        description: "همه امکانات Pro بدون محدودیت در دسترس است.",
+      });
+      onOpenChange(false);
+    } else if (!res.cancelled) {
+      setError(res.error || "خرید انجام نشد. دوباره تلاش کنید.");
+    }
   };
 
   return (
@@ -121,12 +115,12 @@ export default function UpgradeDialog({
                 )}
                 {!isCurrent && p.id === "pro" && (
                   <Button
-                    className="mt-3 bg-amber-500 text-black hover:bg-amber-400"
-                    onClick={() => {
-                      document.getElementById("activation-code-input")?.focus();
-                    }}
+                    className="mt-3 gap-1.5 bg-amber-500 text-black hover:bg-amber-400"
+                    onClick={handlePurchase}
+                    disabled={busy}
                   >
-                    فعال‌سازی با کد
+                    {busy ? <Loader2 className="size-4 animate-spin" /> : <ShoppingBag className="size-4" />}
+                    خرید از کافه‌بازار
                   </Button>
                 )}
                 {!isCurrent && p.id === "enterprise" && (
@@ -139,55 +133,32 @@ export default function UpgradeDialog({
           })}
         </div>
 
-        {/* ── فعال‌سازی ── */}
+        {/* ── خرید ── */}
         <div className="rounded-xl border-2 border-dashed border-amber-500/40 p-4">
           <div className="flex items-center gap-2 text-sm font-bold">
-            <KeyRound className="size-4 text-amber-500" />
-            فعال‌سازی نسخه حرفه‌ای
+            <ShoppingBag className="size-4 text-amber-500" />
+            خرید نسخه حرفه‌ای
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            کد لایسنس خریداری‌شده را وارد کنید (پس از پرداخت، کد برای شما ارسال می‌شود).
+            خرید و فعال‌سازی به‌صورتِ خودکار و از طریقِ درگاهِ رسمیِ کافه‌بازار انجام می‌شود —
+            نیازی به واردکردنِ کد نیست.
           </p>
-          <div className="mt-3 flex gap-2">
-            <Input
-              id="activation-code-input"
-              dir="ltr"
-              placeholder="CLP-PRO-XXXX-XXXX"
-              value={code}
-              onChange={(e) => {
-                setCode(e.target.value);
-                setError(null);
-              }}
-              onKeyDown={(e) => e.key === "Enter" && handleActivate()}
-              className="flex-1 text-center font-mono"
-            />
+          <div className="mt-3">
             <Button
-              className="gap-1.5 bg-amber-500 text-black hover:bg-amber-400"
-              onClick={handleActivate}
+              className="w-full gap-1.5 bg-amber-500 text-black hover:bg-amber-400"
+              onClick={handlePurchase}
               disabled={busy}
             >
-              {busy ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
-              فعال‌سازی
+              {busy ? <Loader2 className="size-4 animate-spin" /> : <ShoppingBag className="size-4" />}
+              خرید از کافه‌بازار — {PLANS.find((p) => p.id === "pro")?.price}
             </Button>
           </div>
           {error && <p className="mt-2 text-xs font-medium text-red-500">{error}</p>}
-          <div className="mt-3 rounded-lg bg-muted/50 p-2.5">
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              <span className="font-bold text-amber-500">کدهای آزمایشی (دمو):</span>{" "}
-              {PRO_DEMO_CODES.slice(0, 3).map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  dir="ltr"
-                  className="mx-1 rounded bg-background px-1.5 py-0.5 font-mono text-[10px] hover:text-amber-500"
-                  onClick={() => setCode(c)}
-                >
-                  {c}
-                </button>
-              ))}
-              — با کلیک، در فیلد قرار می‌گیرد.
+          {!isNativeBillingAvailable() && (
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+              خرید فقط از طریقِ نسخه‌ی اندرویدِ نصب‌شده از کافه‌بازار ممکن است.
             </p>
-          </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>

@@ -25,7 +25,6 @@ import {
   consumeQuota,
   DEFAULT_LICENSE,
   freshUsage,
-  isValidCode,
   todayKey,
   type LicenseState,
   type QuotaKind,
@@ -178,9 +177,14 @@ interface CraneLiftState {
   clearSceneObjects: () => void;
 
   // ── لایسنس و سهمیه نسخه رایگان ──
+  // فعال‌سازی فقط از نتیجه‌ی خریدِ واقعیِ تأییدشده توسطِ پلاگینِ نیتیوِ
+  // BazaarBilling (کافه‌بازار/Poolakey) انجام می‌شود؛ هیچ کدِ دستی‌واردشونده‌ای
+  // در این نسخه پذیرفته نیست.
   license: LicenseState;
-  activate: (code: string) => boolean;
+  activatePro: (purchase: { purchaseToken: string; orderId?: string }) => void;
   deactivate: () => void;
+  /** هم‌گام‌سازیِ وضعیتِ لایسنس با نتیجه‌ی queryPurchases() پلاگینِ نیتیو (منبعِ معتبر) */
+  syncLicenseFromNative: (owned: boolean, purchaseToken?: string) => void;
   usage: UsageCounters;
   consume: (kind: QuotaKind) => void;
 
@@ -338,18 +342,31 @@ export const useLiftStore = create<CraneLiftState>()(
 
       // لایسنس
       license: DEFAULT_LICENSE,
-      activate: (code) => {
-        if (!isValidCode(code)) return false;
+      activatePro: ({ purchaseToken, orderId }) =>
         set({
           license: {
             plan: "pro",
-            code: code.trim().toUpperCase(),
+            purchaseToken,
             activatedAt: new Date().toISOString(),
           },
-        });
-        return true;
-      },
+        }),
       deactivate: () => set({ license: DEFAULT_LICENSE }),
+      syncLicenseFromNative: (owned, purchaseToken) =>
+        set((s) => {
+          if (owned) {
+            return {
+              license: {
+                plan: "pro",
+                purchaseToken: purchaseToken ?? s.license.purchaseToken,
+                activatedAt: s.license.activatedAt ?? new Date().toISOString(),
+              },
+            };
+          }
+          // کافه‌بازار مالکیتی گزارش نکرده (خرید نشده یا رفاند شده) — سمتِ
+          // کلاینت هیچ وضعیتِ Pro‌ای معتبر نیست، صرف‌نظر از آنچه قبلاً در
+          // localStorage ذخیره شده بود.
+          return { license: DEFAULT_LICENSE };
+        }),
       usage: freshUsage(),
       consume: (kind) => set({ usage: consumeQuota(get().license.plan, get().usage, kind) }),
 
@@ -419,6 +436,17 @@ export function useHydrateLiftStore(): boolean {
         sceneObjects: Array.isArray(st.sceneObjects) ? st.sceneObjects : [],
       });
       setHydrated(true);
+
+      // هم‌گام‌سازیِ وضعیتِ Pro با نتیجه‌ی واقعیِ کافه‌بازار (فقط روی اندرویدِ
+      // نیتیو اثر دارد). این تضمین می‌کند که وضعیتِ ذخیره‌شده در localStorage
+      // صرفاً یک کَش است، نه منبعِ معتبرِ لایسنس — چون localStorage به‌تنهایی
+      // توسطِ خودِ کاربر هم قابلِ‌ویرایش است.
+      import("./bazaarBilling").then(({ isNativeBillingAvailable, queryProOwnership }) => {
+        if (!isNativeBillingAvailable()) return;
+        queryProOwnership().then((res) => {
+          if (res) useLiftStore.getState().syncLicenseFromNative(res.owned, res.purchaseToken);
+        });
+      });
     });
   }
   return hydrated;

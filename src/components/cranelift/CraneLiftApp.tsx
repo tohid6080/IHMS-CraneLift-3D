@@ -269,8 +269,8 @@ function CraneLiftAppInner() {
               aria-label={license.plan === "pro" ? "پلن حرفه‌ای فعال است" : "ارتقا به نسخه حرفه‌ای"}
               title={
                 license.plan === "pro"
-                  ? `نسخه حرفه‌ای فعال — کد ${license.code ?? ""}`
-                  : "ارتقا به نسخه حرفه‌ای (پلن‌ها و فعال‌سازی)"
+                  ? "نسخه حرفه‌ای فعال"
+                  : "ارتقا به نسخه حرفه‌ای (پلن‌ها و خرید)"
               }
               onClick={() => setUpgradeOpen(true)}
               className={`${TILE_SIZE} flex flex-col items-center justify-center gap-0.5 rounded-lg border-2 transition-colors ${
