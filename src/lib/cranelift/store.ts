@@ -6,6 +6,7 @@
  * اسکرین‌شات‌ها persist نمی‌شوند (حجم بالا).
  */
 
+import { Capacitor } from "@capacitor/core";
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type {
@@ -404,7 +405,13 @@ export const useLiftStore = create<CraneLiftState>()(
     }),
     {
       name: "cranelift-pro-v1",
-      storage: createJSONStorage(() => localStorage),
+      // روی اندرویدِ نیتیو (Capacitor) پروژه باید بینِ جلسات باقی بماند
+      // (همان رفتارِ همیشگیِ نسخه‌ی خریداری‌شده) → localStorage. در مرورگر
+      // (نسخه‌ی آزمایشیِ تعبیه‌شده در IHMS) طبقِ خواسته‌ی محصول، اطلاعاتِ
+      // لیفت کاملاً موقتی‌اند و با بستنِ تب پاک می‌شوند → sessionStorage.
+      storage: createJSONStorage(() =>
+        Capacitor.isNativePlatform() ? window.localStorage : window.sessionStorage
+      ),
       skipHydration: true, // برای جلوگیری از mismatch — دستی rehydrate می‌کنیم
       partialize: (state) => {
         // تصاویر و پرچم hydrate ذخیره نمی‌شوند

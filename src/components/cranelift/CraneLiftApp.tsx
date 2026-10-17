@@ -10,6 +10,8 @@
  * بالای فوتر و فوتر چسبان با ناوبری مراحل.
  */
 
+import { useEffect, useState } from "react";
+import { Capacitor } from "@capacitor/core";
 import { ThemeProvider, useTheme } from "next-themes";
 import {
   Truck,
@@ -27,11 +29,14 @@ import {
   Loader2,
   Cable,
   Crown,
+  ShieldAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { withBasePath } from "@/lib/basePath";
 import { useLiftStore, useHydrateLiftStore } from "@/lib/cranelift/store";
+import { getStoredTrial, isTrialActive, type StoredTrial } from "@/lib/cranelift/trialAuth";
+import TrialGate from "./TrialGate";
 import { getCraneById } from "@/lib/cranelift/cranes";
 import { getChartFor } from "@/lib/cranelift/load-charts";
 import Step1Crane from "./steps/Step1Crane";
@@ -124,6 +129,32 @@ function CraneLiftAppInner() {
   const upgradeOpen = useUiStore((s) => s.upgradeOpen);
   const setUpgradeOpen = useUiStore((s) => s.setUpgradeOpen);
 
+  // ── گیتِ ورودِ آزمایشیِ وب — فقط در مرورگر (نه در اندرویدِ نیتیو، که
+  // کاربرش همان خریدارِ کافه‌بازار است و مسیرِ Poolakey را طی می‌کند) ──
+  const isWeb = !Capacitor.isNativePlatform();
+  const [trial, setTrial] = useState<StoredTrial | null>(null);
+  const [trialChecked, setTrialChecked] = useState(false);
+  // خواندنِ localStorage همگام است؛ این بلوک فقط وقتی اجرا می‌شود که
+  // hydrated از قبل true شده باشد (یعنی حتماً سمتِ کلاینت هستیم — نگاه
+  // کنید به useHydrateLiftStore)، پس هرگز در رندرِ SSR اجرا نمی‌شود و
+  // ناهمخوانیِ هیدریشن ایجاد نمی‌کند.
+  if (hydrated && !trialChecked) {
+    setTrialChecked(true);
+    setTrial(isWeb ? getStoredTrial() : null);
+  }
+  const trialActive = isWeb && isTrialActive(trial);
+
+  // هشدارِ مرورگریِ بستن/ترکِ صفحه — یادآوری که دادهٔ پروژه ذخیره نمی‌شود
+  useEffect(() => {
+    if (!trialActive) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [trialActive]);
+
   const crane = getCraneById(selectedCraneId, customCranes);
   const chart = crane ? getChartFor(crane.id, customCharts) : null;
   const grossT = inputs.loadWeightT + inputs.hookBlockWeightT + inputs.riggingWeightT;
@@ -168,7 +199,11 @@ function CraneLiftAppInner() {
     setRopeOpen(true);
   };
 
-  if (!hydrated) return <Splash />;
+  if (!hydrated || !trialChecked) return <Splash />;
+
+  if (isWeb && !trialActive) {
+    return <TrialGate expired={!!trial} onSuccess={setTrial} />;
+  }
 
   const showScenePanel = step >= 2 && step <= 4;
   const StepComponent = [
@@ -303,6 +338,15 @@ function CraneLiftAppInner() {
           </div>
         </div>
       </header>
+
+      {/* ═══ هشدارِ دائمیِ نسخه‌ی آزمایشیِ وب — بدون سرور، پاک‌شونده با بستنِ تب ═══ */}
+      {isWeb && (
+        <div className="flex items-center justify-center gap-1.5 bg-amber-500/15 px-3 py-1.5 text-center text-[11px] font-medium leading-relaxed text-amber-700 dark:text-amber-400">
+          <ShieldAlert className="size-3.5 shrink-0" />
+          نسخه‌ی آزمایشیِ وب — اطلاعاتِ این پروژه روی هیچ سروری ذخیره نمی‌شود و با بستن یا ترکِ این
+          صفحه برای همیشه پاک خواهد شد.
+        </div>
+      )}
 
       {/* ═══ محتوای اصلی ═══ */}
       <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6">
