@@ -10,8 +10,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: cranelift-pages-deploy
+  cancel-in-progress: false
 
 jobs:
   build:
