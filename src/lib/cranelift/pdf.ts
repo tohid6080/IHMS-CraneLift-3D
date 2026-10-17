@@ -12,6 +12,7 @@
  * اما توابع خروجی فقط باید در مرورگر (event handler کلاینت) صدا زده شوند.
  */
 
+import { withBasePath } from "@/lib/basePath";
 import { CRANE_TYPE_LABELS } from "./types";
 import { STATUS_LABELS } from "./analysis";
 import { SCENE_OBJECT_CATALOG, sceneObjectLabel } from "./scene-objects";
@@ -271,7 +272,7 @@ function headerBand(data: ReportData): HTMLElement {
     background: "#ffffff",
     border: "2px solid #1c1917",
   });
-  logo.src = "/logo.png";
+  logo.src = withBasePath("/logo.png");
   logo.alt = "IHMS — Integrated HSE Management System";
 
   const band = el(

@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { withBasePath } from "@/lib/basePath";
 import { useLiftStore, useHydrateLiftStore } from "@/lib/cranelift/store";
 import { getCraneById } from "@/lib/cranelift/cranes";
 import { getChartFor } from "@/lib/cranelift/load-charts";
@@ -82,7 +83,7 @@ function Splash() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-background px-6">
       <img
-        src="/logo.png"
+        src={withBasePath("/logo.png")}
         alt="لوگوی IHMS — Integrated HSE Management System"
         className="w-44 animate-pulse rounded-3xl shadow-[0_0_60px_rgba(20,83,45,0.35)] sm:w-56 md:w-64"
       />
@@ -187,7 +188,7 @@ function CraneLiftAppInner() {
           {/* لوگوی فشرده — ابتدای نوار */}
           <div className="flex shrink-0 items-center gap-2 py-1.5">
             <img
-              src="/logo.png"
+              src={withBasePath("/logo.png")}
               alt="لوگوی IHMS"
               className="size-10 rounded-xl bg-white/90 object-contain shadow-sm ring-1 ring-slate-400/40 sm:size-11"
             />
