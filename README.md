@@ -1,7 +1,8 @@
 # IHMS CraneLift 3D
 
 اپلیکیشنِ برنامه‌ریزی و تحلیلِ لیفتِ جرثقیل — Next.js (React 19) + Three.js،
-با بسته‌بندیِ اندروید از طریقِ Capacitor.
+با بسته‌بندیِ اندروید از طریقِ Capacitor، و نسخه‌ی وبِ آزمایشی روی GitHub
+Pages (تعبیه‌شده با iframe داخلِ سامانه‌ی IHMS).
 
 ## توسعه
 
@@ -15,6 +16,26 @@ npm run lint
 > این اپ کاملاً کلاینت‌ساید است (بدونِ API route/SSR واقعی) — خروجیِ
 > `next build` به‌صورتِ Static Export (`output: "export"`) در پوشه‌ی
 > `out/` تولید می‌شود.
+
+## نسخه‌ی وب (GitHub Pages)
+
+از طریقِ GitHub Actions (`.github/workflows/deploy-pages.yml`، اجرا به‌ازایِ
+هر push به `main`) روی `https://tohid6080.github.io/IHMS-CraneLift-3D/`
+دیپلوی می‌شود. نیازمندِ فعال‌بودنِ GitHub Pages در تنظیماتِ ریپو (Settings →
+Pages → Build and deployment → Source: **GitHub Actions**).
+
+چون آدرسِ Pages زیرِ ساب‌پاثِ پروژه است (نه ریشه‌ی دامنه)، `next.config.ts`
+با `GH_PAGES=true` یک `basePath`/`assetPrefix` ست می‌کند — این env فقط در
+وورک‌فلوی دیپلویِ وب ست می‌شود، بیلدِ اندروید/Capacitor کاملاً دست‌نخورده
+می‌ماند.
+
+این نسخه‌ی وب در سامانه‌ی IHMS (`ihmsapp.ir/cranelift/`) با یک iframe تعبیه
+شده. بازدیدکنندگانِ وب (غیرِ اندرویدِ نیتیو) قبل از استفاده از ابزار، یک
+کادرِ ورود/ثبت‌نامِ آزمایشیِ ۱روزه می‌بینند (`src/components/cranelift/
+TrialGate.tsx` + `src/lib/cranelift/trialAuth.ts`) — فقط نام/موبایل/شرکت در
+Supabaseِ IHMS ثبت می‌شود؛ هیچ داده‌ی برنامه‌ریزیِ لیفتی هرگز به سرور نمی‌رود
+و در این حالت به‌جایِ `localStorage`، در `sessionStorage` نگه‌داری می‌شود (با
+بستنِ تب پاک می‌شود — نگاه کنید به `src/lib/cranelift/store.ts`).
 
 ## ساختِ APK اندروید
 
@@ -37,9 +58,11 @@ npm run cap:open    # باز کردنِ پروژه در Android Studio
 پروژه یک لیستِ کدِ دموی هاردکدشده در کلاینت داشتند که کاملاً قابلِ‌دور زدن
 بود — به همین دلیل کاملاً حذف شد).
 
-اتصالِ واقعیِ Poolakey هنوز سیم‌کشی نشده (نیاز به حسابِ توسعه‌دهنده‌ی
-کافه‌بازار + کلیدِ RSA + شناسه‌ی محصول دارد) — راهنمای کاملِ فازِ ۲ در
+اتصالِ واقعیِ Poolakey سیم‌کشی شده (کلیدِ RSA واقعیِ حسابِ کافه‌بازار +
+شناسه‌ی محصولِ `cranelift_pro_lifetime` در `BazaarBillingPlugin.kt` تنظیم
+شده‌اند) — جزئیات در
 [`android-native/bazaar-billing/README.md`](android-native/bazaar-billing/README.md).
+این مسیر فقط در بیلدِ اندرویدِ نیتیو کار می‌کند؛ نسخه‌ی وب خریدی ندارد.
 
 ## یادداشتِ امنیتی
 
