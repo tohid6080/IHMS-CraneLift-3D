@@ -8,9 +8,9 @@ on:
         required: true
         default: "1.0.0"
       version_code:
-        description: "versionCode عددی (باید از نسخه‌ی قبلی بزرگ‌تر باشد)"
-        required: true
-        default: "1"
+        description: "versionCode عددی (باید از نسخه‌ی قبلی بزرگ‌تر باشد) — خالی بگذارید تا خودکار از رویِ شماره‌ی اجرای این workflow محاسبه شود (همیشه از اجرای قبلی بزرگ‌تر است، پس هرگز با بازار تداخل نمی‌کند)"
+        required: false
+        default: ""
       release_notes:
         description: "Release Notes — تغییرات این نسخه (اختیاری)"
         required: false
@@ -145,8 +145,14 @@ jobs:
 
       - name: Set app version in Gradle
         run: |
+          VERSION_CODE="${{ github.event.inputs.version_code }}"
+          if [ -z "$VERSION_CODE" ]; then
+            VERSION_CODE="${{ github.run_number }}"
+            echo "version_code ورودی خالی بود — از شماره‌ی اجرای CI استفاده شد: $VERSION_CODE"
+          fi
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
           GRADLE=android/app/build.gradle
-          sed -i "s/versionCode .*/versionCode ${{ github.event.inputs.version_code }}/" "$GRADLE"
+          sed -i "s/versionCode .*/versionCode $VERSION_CODE/" "$GRADLE"
           sed -i "s/versionName .*/versionName \"${{ github.event.inputs.version }}\"/" "$GRADLE"
           echo "----- versions in build.gradle -----"
           grep -E "versionCode|versionName" "$GRADLE"
@@ -244,7 +250,7 @@ jobs:
         run: |
           TAG="v${{ github.event.inputs.version }}"
           NOTES="${{ github.event.inputs.release_notes }}"
-          if [ -z "$NOTES" ]; then NOTES="IHMS CraneLift 3D ${{ github.event.inputs.version }} (build ${{ github.event.inputs.version_code }})"; fi
+          if [ -z "$NOTES" ]; then NOTES="IHMS CraneLift 3D ${{ github.event.inputs.version }} (build $VERSION_CODE)"; fi
           gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
           if [ "$HAS_RELEASE" = "true" ]; then
             gh release create "$TAG" \
