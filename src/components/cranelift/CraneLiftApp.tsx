@@ -62,8 +62,12 @@ const STEPS = [
   { title: "گزارش PDF", icon: FileDown },
 ] as const;
 
-/** ابعاد کاشی LMI: ~۵۲px موبایل → ۶۴/۷۲px دسکتاپ */
-const TILE_SIZE = "size-13 sm:size-16 md:size-18";
+/** ابعاد کاشی LMI: ~۴۴px موبایل → ۶۴/۷۲px دسکتاپ.
+ * روی صفحه‌ی خیلی باریک (۳۶۰px)، ۴ کاشیِ ابزار (سمتِ چپِ نوار، shrink-0)
+ * با کاشی‌هایِ مرحله رقابت می‌کردند و نوارِ مراحل را به یک کاشی فشرده
+ * می‌کردند — اندازه‌ی پایه از ۵۲ به ۴۴px کم شد تا فضایِ بیشتری برایِ
+ * نوارِ اسکرول‌شوندهٔ مراحل بماند؛ sm/md دست‌نخورده‌اند. */
+const TILE_SIZE = "size-11 sm:size-16 md:size-18";
 
 /** کاشی تم — بدون state اضافه: آیکون با کلاس dark کنترل می‌شود */
 function ThemeToggle() {
@@ -78,7 +82,7 @@ function ThemeToggle() {
     >
       <Sun className="hidden size-6 text-amber-500 dark:block" />
       <Moon className="size-6 dark:hidden" />
-      <span className="text-[10px] font-medium leading-none">تم</span>
+      <span className="hidden text-[10px] font-medium leading-none sm:block">تم</span>
     </button>
   );
 }
@@ -297,7 +301,7 @@ function CraneLiftAppInner() {
               className={`${TILE_SIZE} flex flex-col items-center justify-center gap-0.5 rounded-lg border-2 border-border text-muted-foreground transition-colors hover:border-amber-500/50 hover:text-amber-500`}
             >
               <Cable className="size-6" />
-              <span className="text-[10px] font-medium leading-none">سیم بکسل</span>
+              <span className="hidden text-[10px] font-medium leading-none sm:block">سیم بکسل</span>
             </button>
             {/* ارتقا / وضعیت پلن */}
             <button
@@ -320,7 +324,7 @@ function CraneLiftAppInner() {
               ) : (
                 <Crown className="size-6" />
               )}
-              <span className="text-[10px] font-medium leading-none">
+              <span className="hidden text-[10px] font-medium leading-none sm:block">
                 {license.plan === "pro" ? "Pro فعال" : "ارتقا"}
               </span>
             </button>
@@ -333,7 +337,7 @@ function CraneLiftAppInner() {
               className={`${TILE_SIZE} flex flex-col items-center justify-center gap-0.5 rounded-lg border-2 border-border text-muted-foreground transition-colors hover:border-red-500/50 hover:text-red-500`}
             >
               <RotateCcw className="size-6" />
-              <span className="text-[10px] font-medium leading-none">ریست</span>
+              <span className="hidden text-[10px] font-medium leading-none sm:block">ریست</span>
             </button>
           </div>
         </div>
