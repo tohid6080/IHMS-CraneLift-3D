@@ -8,6 +8,8 @@
  * همیشه در باندلِ کلاینت قابلِ‌استخراج است و قابلِ‌دورزدن می‌شود.
  */
 
+import { Capacitor } from "@capacitor/core";
+
 export type PlanType = "free" | "pro";
 
 export interface LicenseState {
@@ -27,6 +29,22 @@ export const FREE_LIMITS: Record<QuotaKind, number> = {
   rope: 5, // استفاده از محاسبه‌گر سیم بکسل در روز
   pdf: 1, // گزارش PDF در روز (با واترمارک)
 };
+
+// سهمیه‌ی سخت‌گیرانه‌ترِ دوره‌ی آزمایشیِ ۱روزه‌ی وب (کاربرانی که از طریقِ
+// TrialGate داخلِ IHMS وارد شده‌اند) — جداگانه از FREE_LIMITS که سقفِ
+// همیشگیِ نسخه‌ی رایگانِ اندرویدِ نیتیو است و دست‌نخورده می‌ماند.
+export const TRIAL_LIMITS: Record<QuotaKind, number> = {
+  analysis: 2,
+  rope: 1,
+  pdf: 1, // با واترمارک، مثلِ نسخه‌ی رایگان
+};
+
+// هر دسترسیِ غیرِ نیتیو در این اپ، طبقِ گیتِ CraneLiftApp.tsx
+// (isWeb && !trialActive → TrialGate)، همیشه در همان دوره‌ی آزمایشیِ
+// ۱روزه است — پس این چک به‌تنهایی برایِ انتخابِ سهمیه کافی است.
+function activeLimits(): Record<QuotaKind, number> {
+  return Capacitor.isNativePlatform() ? FREE_LIMITS : TRIAL_LIMITS;
+}
 
 export const QUOTA_LABELS: Record<QuotaKind, string> = {
   analysis: "اجرای تحلیل",
@@ -72,7 +90,7 @@ export function quotaCheck(
 ): QuotaCheck {
   const used = usage?.date === todayKey() ? (usage[kind] ?? 0) : 0;
   if (plan === "pro") return { ok: true, remaining: Infinity, limit: null, used };
-  const limit = FREE_LIMITS[kind];
+  const limit = activeLimits()[kind];
   return { ok: used < limit, remaining: Math.max(0, limit - used), limit, used };
 }
 
